@@ -1,5 +1,6 @@
 {-# OPTIONS_HADDOCK hide #-}
 {-# LANGUAGE OverloadedStrings, ScopedTypeVariables #-}
+{-# LANGUAGE RankNTypes #-}
 -- |
 -- Module      : Network.TLS.Core
 -- License     : BSD-style
@@ -45,30 +46,35 @@ import qualified Control.Exception as E
 
 import Control.Monad.State
 
+import GHC.Stack
+import qualified Prelude
+import Prelude hiding (IO)
+
+type IO a = HasCallStack => Prelude.IO a
 
 -- | notify the context that this side wants to close connection.
 -- this is important that it is called before closing the handle, otherwise
 -- the session might not be resumable (for version < TLS1.2).
 --
 -- this doesn't actually close the handle
-bye :: MonadIO m => Context -> m ()
+bye :: HasCallStack => MonadIO m => Context -> m ()
 bye ctx = sendPacket ctx $ Alert [(AlertLevel_Warning, CloseNotify)]
 
 -- | If the Next Protocol Negotiation or ALPN extensions have been used, this will
 -- return get the protocol agreed upon.
-getNegotiatedProtocol :: MonadIO m => Context -> m (Maybe B.ByteString)
+getNegotiatedProtocol :: HasCallStack => MonadIO m => Context -> m (Maybe B.ByteString)
 getNegotiatedProtocol ctx = liftIO $ usingState_ ctx S.getNegotiatedProtocol
 
 type HostName = String
 
 -- | If the Server Name Indication extension has been used, return the
 -- hostname specified by the client.
-getClientSNI :: MonadIO m => Context -> m (Maybe HostName)
+getClientSNI :: HasCallStack => MonadIO m => Context -> m (Maybe HostName)
 getClientSNI ctx = liftIO $ usingState_ ctx S.getClientSNI
 
 -- | sendData sends a bunch of data.
 -- It will automatically chunk data to acceptable packet size
-sendData :: MonadIO m => Context -> L.ByteString -> m ()
+sendData :: HasCallStack => MonadIO m => Context -> L.ByteString -> m ()
 sendData ctx dataToSend = liftIO (checkValid ctx) >> mapM_ sendDataChunk (L.toChunks dataToSend)
   where sendDataChunk d
             | B.length d > 16384 = do
@@ -79,7 +85,7 @@ sendData ctx dataToSend = liftIO (checkValid ctx) >> mapM_ sendDataChunk (L.toCh
 
 -- | recvData get data out of Data packet, and automatically renegotiate if
 -- a Handshake ClientHello is received
-recvData :: MonadIO m => Context -> m B.ByteString
+recvData :: HasCallStack => MonadIO m => Context -> m B.ByteString
 recvData ctx = liftIO $ do
     checkValid ctx
     E.catchJust safeHandleError_EOF
@@ -129,5 +135,5 @@ recvData ctx = liftIO $ do
 
 {-# DEPRECATED recvData' "use recvData that returns strict bytestring" #-}
 -- | same as recvData but returns a lazy bytestring.
-recvData' :: MonadIO m => Context -> m L.ByteString
+recvData' :: HasCallStack => MonadIO m => Context -> m L.ByteString
 recvData' ctx = recvData ctx >>= return . L.fromChunks . (:[])

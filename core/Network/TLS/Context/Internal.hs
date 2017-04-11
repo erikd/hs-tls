@@ -1,3 +1,4 @@
+{-# LANGUAGE RankNTypes #-}
 -- |
 -- Module      : Network.TLS.Context.Internal
 -- License     : BSD-style
@@ -74,6 +75,11 @@ import Control.Exception (throwIO, Exception())
 import Data.IORef
 import Data.Tuple
 
+import GHC.Stack
+import Prelude hiding (IO)
+import qualified Prelude
+
+type IO a = HasCallStack => Prelude.IO a
 
 -- | Information related to a running context, e.g. current cipher
 data Information = Information
@@ -174,10 +180,10 @@ setEstablished ctx v = writeIORef (ctxEstablished_ ctx) v
 withLog :: Context -> (Logging -> IO ()) -> IO ()
 withLog ctx f = ctxWithHooks ctx (f . hookLogging)
 
-throwCore :: (MonadIO m, Exception e) => e -> m a
+throwCore :: (HasCallStack, MonadIO m, Exception e) => e -> m a
 throwCore = liftIO . throwIO
 
-failOnEitherError :: MonadIO m => m (Either TLSError a) -> m a
+failOnEitherError :: HasCallStack => MonadIO m => m (Either TLSError a) -> m a
 failOnEitherError f = do
     ret <- f
     case ret of

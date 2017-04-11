@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE RankNTypes #-}
 -- |
 -- Module      : Network.TLS.Backend
 -- License     : BSD-style
@@ -35,6 +36,12 @@ import qualified Network.Socket.ByteString as Network
 import qualified Data.ByteString.Lazy as L
 import qualified Hans.NetworkStack as Hans
 #endif
+
+import GHC.Stack
+import Prelude hiding (IO)
+import qualified Prelude
+
+type IO a = HasCallStack => Prelude.IO a
 
 -- | Connection IO backend
 data Backend = Backend
@@ -73,8 +80,11 @@ safeRecv s buf = do
 instance HasBackend Network.Socket where
     initializeBackend _ = return ()
     getBackend sock = Backend (return ()) (Network.close sock) (Network.sendAll sock) recvAll
-      where recvAll n = B.concat `fmap` loop n
-              where loop 0    = return []
+      where  recvAll :: HasCallStack => Int -> IO ByteString
+             recvAll n = B.concat `fmap` loop n
+              where 
+                    loop :: HasCallStack => Int -> IO [ByteString]
+                    loop 0    = return []
                     loop left = do
                         r <- safeRecv sock left
                         if B.null r
@@ -91,7 +101,11 @@ instance HasBackend Hans.Socket where
               if (amt == 0) || (amt == B.length x)
                  then return ()
                  else sendAll (B.drop amt x)
+
+            recvAll :: HasCallStack => Int -> IO a
             recvAll n = loop (fromIntegral n) L.empty
+
+            loop :: HasCallStack => Int -> IO a
             loop    0 acc = return (L.toStrict acc)
             loop left acc = do
                 r <- Hans.recvBytes sock left

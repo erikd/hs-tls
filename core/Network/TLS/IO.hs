@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE RankNTypes #-}
 -- |
 -- Module      : Network.TLS.IO
 -- License     : BSD-style
@@ -26,6 +27,12 @@ import Data.IORef
 import Control.Monad.State
 import Control.Exception (throwIO)
 import System.IO.Error (mkIOError, eofErrorType)
+
+import GHC.Stack
+import Prelude hiding (IO)
+import qualified Prelude
+
+type IO a = HasCallStack => Prelude.IO a
 
 checkValid :: Context -> IO ()
 checkValid ctx = do
@@ -81,7 +88,7 @@ recvRecord compatSSLv2 ctx
 -- | receive one packet from the context that contains 1 or
 -- many messages (many only in case of handshake). if will returns a
 -- TLSError if the packet is unexpected or malformed
-recvPacket :: MonadIO m => Context -> m (Either TLSError Packet)
+recvPacket :: HasCallStack => MonadIO m => Context -> m (Either TLSError Packet)
 recvPacket ctx = liftIO $ do
     compatSSLv2 <- ctxHasSSLv2ClientHello ctx
     erecord     <- recvRecord compatSSLv2 ctx
@@ -101,7 +108,7 @@ recvPacket ctx = liftIO $ do
             return pkt
 
 -- | Send one packet to the context
-sendPacket :: MonadIO m => Context -> Packet -> m ()
+sendPacket :: HasCallStack => MonadIO m => Context -> Packet -> m ()
 sendPacket ctx pkt = do
     -- in ver <= TLS1.0, block ciphers using CBC are using CBC residue as IV, which can be guessed
     -- by an attacker. Hence, an empty packet is sent before a normal data packet, to
