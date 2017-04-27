@@ -44,6 +44,17 @@ readExact ctx sz = do
             else throwCore (Error_Packet ("partial packet: expecting " ++ show sz ++ " bytes, got: " ++ (show $B.length hdrbs)))
     return hdrbs
 
+readExactE :: Context -> Int -> IO (Either TLSError Bytes)
+readExactE ctx sz = do
+    hdrbs <- contextRecv ctx sz
+    when (B.length hdrbs < sz && B.null hdrbs) $
+        throwCore Error_EOF
+    return $
+        if B.length hdrbs == sz
+            then Right hdrbs
+            else Left (Error_Packet ("partial packet: expecting " ++ show sz ++ " bytes, got: " ++ (show $B.length hdrbs)))
+
+
 -- | recvRecord receive a full TLS record (header + data), from the other side.
 --
 -- The record is disengaged from the record layer
@@ -58,10 +69,18 @@ recvRecord compatSSLv2 ctx
             then readExact ctx 3 >>= either (return . Left) recvLength . decodeHeader . B.append header
             else either (return . Left) recvDeprecatedLength $ decodeDeprecatedHeaderLength header
 #endif
-    | otherwise = readExact ctx 5 >>= either (return . Left) recvLength . decodeHeader
+    | otherwise = do
+        res <- readExactE ctx 5
+        case res of
+          Left e -> return $ Left e
+          Right bs -> either (return . Left) recvLength $ decodeHeader bs
         where recvLength header@(Header _ _ readlen)
                 | readlen > 16384 + 2048 = return $ Left maximumSizeExceeded
-                | otherwise              = readExact ctx (fromIntegral readlen) >>= getRecord header
+                | otherwise              = do
+                    res <- readExactE ctx (fromIntegral readlen)
+                    case res of
+                      Left e -> return $ Left e
+                      Right b -> getRecord header b
 #ifdef SSLV2_COMPATIBLE
               recvDeprecatedLength readlen
                 | readlen > 1024 * 4     = return $ Left maximumSizeExceeded
