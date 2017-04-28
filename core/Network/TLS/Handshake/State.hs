@@ -57,6 +57,7 @@ import Network.TLS.Crypto
 import Network.TLS.Cipher
 import Network.TLS.Compression
 import Network.TLS.Types
+import Network.TLS.ErrT
 import Control.Applicative (Applicative, (<$>))
 import Control.Monad.State.Strict
 import Data.X509 (CertificateChain)
@@ -94,8 +95,9 @@ type ClientCertRequestData = ([CertificateType],
                               Maybe [(HashAlgorithm, SignatureAlgorithm)],
                               [DistinguishedName])
 
-newtype HandshakeM a = HandshakeM { runHandshakeM :: State HandshakeState a }
-    deriving (Functor, Applicative, Monad)
+newtype HandshakeM a = HandshakeM { runHandshakeM :: ErrT TLSError (State HandshakeState) a }
+    deriving (Monad, MonadError TLSError, Functor, Applicative)
+
 
 instance MonadState HandshakeState HandshakeM where
     put x = HandshakeM (put x)
@@ -128,8 +130,9 @@ newEmptyHandshake ver crand = HandshakeState
     , hstPendingCompression  = nullCompression
     }
 
-runHandshake :: HandshakeState -> HandshakeM a -> (a, HandshakeState)
-runHandshake hst f = runState (runHandshakeM f) hst
+runHandshake :: HandshakeState -> HandshakeM a -> (Either TLSError a, HandshakeState)
+runHandshake hst f = runState (runErrT (runHandshakeM f)) hst
+
 
 setPublicKey :: PubKey -> HandshakeM ()
 setPublicKey pk = modify (\hst -> hst { hstKeyState = setPK (hstKeyState hst) })

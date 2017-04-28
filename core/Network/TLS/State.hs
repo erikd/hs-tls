@@ -17,6 +17,7 @@ module Network.TLS.State
     , TLSSt
     , runTLSState
     , newTLSState
+    , tlsLeft
     , withTLSRNG
     , updateVerifiedData
     , finishHandshakeTypeMaterial
@@ -94,6 +95,9 @@ instance MonadState TLSState TLSSt where
 #if MIN_VERSION_mtl(2,1,0)
     state f = TLSSt (lift $ state f)
 #endif
+
+tlsLeft :: TLSError -> TLSSt a
+tlsLeft = TLSSt . left
 
 runTLSState :: TLSSt a -> TLSState -> (Either TLSError a, TLSState)
 runTLSState f st = runState (runErrT (runTLSSt f)) st

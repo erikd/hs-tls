@@ -37,8 +37,9 @@ processPacket _ (Record ProtocolType_Alert _ fragment) = return (Alert `fmapEith
 processPacket ctx (Record ProtocolType_ChangeCipherSpec _ fragment) =
     case decodeChangeCipherSpec $ fragmentGetBytes fragment of
         Left err -> return $ Left err
-        Right _  -> do switchRxEncryption ctx
-                       return $ Right ChangeCipherSpec
+        Right _  -> runErrT $ do
+                        switchRxEncryption ctx
+                        return ChangeCipherSpec
 
 processPacket ctx (Record ProtocolType_Handshake ver fragment) = do
     keyxchg <- getHState ctx >>= \hs -> return $ (hs >>= hstPendingCipher >>= Just . cipherKeyExchange)
@@ -58,17 +59,17 @@ processPacket ctx (Record ProtocolType_Handshake ver fragment) = do
                 GotPartial cont             -> modify (\st -> st { stHandshakeRecordCont = Just cont }) >> return []
                 GotSuccess (ty,content)     ->
                     either throwError (return . (:[])) $ decodeHandshake currentParams ty content
-                GotSuccessRemaining (ty,content) left ->
+                GotSuccessRemaining (ty,content) lft ->
                     case decodeHandshake currentParams ty content of
                         Left err -> throwError err
-                        Right hh -> (hh:) `fmap` parseMany currentParams Nothing left
+                        Right hh -> (hh:) `fmap` parseMany currentParams Nothing lft
 
 processPacket _ (Record ProtocolType_DeprecatedHandshake _ fragment) =
     case decodeDeprecatedHandshake $ fragmentGetBytes fragment of
         Left err -> return $ Left err
         Right hs -> return $ Right $ Handshake [hs]
 
-switchRxEncryption :: Context -> IO ()
+switchRxEncryption :: Context -> ErrT TLSError IO ()
 switchRxEncryption ctx =
-    usingHState ctx (gets hstPendingRxState) >>= \rx ->
+    usingHStateT ctx (gets hstPendingRxState) >>= \rx ->
     liftIO $ modifyMVar_ (ctxRxState ctx) (\_ -> return $ fromJust "rx-state" rx)

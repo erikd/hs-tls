@@ -30,6 +30,8 @@ import Network.TLS.Handshake.State
 import Network.TLS.Handshake.Process
 import Network.TLS.Handshake.Key
 import Network.TLS.Measurement
+import Network.TLS.ErrT
+import Network.TLS.Util
 import Data.Maybe (isJust, listToMaybe, mapMaybe)
 import Data.List (intersect, any)
 import qualified Data.ByteString as B
@@ -55,8 +57,8 @@ import Network.TLS.X509
 --
 -- This is just a helper to pop the next message from the recv layer,
 -- and call handshakeServerWith.
-handshakeServer :: MonadIO m => ServerParams -> Context -> m ()
-handshakeServer sparams ctx = liftIO $ do
+handshakeServer :: ServerParams -> Context -> ErrT TLSError IO ()
+handshakeServer sparams ctx = do
     hss <- recvPacketHandshake ctx
     case hss of
         [ch] -> handshakeServerWith sparams ctx ch
@@ -86,39 +88,39 @@ handshakeServer sparams ctx = liftIO $ do
 --      -> change cipher      <- change cipher
 --      -> finish             <- finish
 --
-handshakeServerWith :: ServerParams -> Context -> Handshake -> IO ()
+handshakeServerWith :: ServerParams -> Context -> Handshake -> ErrT TLSError IO ()
 handshakeServerWith sparams ctx clientHello@(ClientHello clientVersion _ clientSession ciphers compressions exts _) = do
     -- rejecting client initiated renegotiation to prevent DOS.
-    unless (supportedClientInitiatedRenegotiation (ctxSupported ctx)) $ do
-        established <- ctxEstablished ctx
-        eof <- ctxEOF ctx
+    unless (supportedClientInitiatedRenegotiation $ ctxSupported ctx) $ do
+        established <- liftIO $ ctxEstablished ctx
+        eof <- liftIO $ ctxEOF ctx
         when (established && not eof) $
-            throwCore $ Error_Protocol ("renegotiation is not allowed", False, NoRenegotiation)
+            left $ Error_Protocol ("renegotiation is not allowed", False, NoRenegotiation)
     -- check if policy allow this new handshake to happens
-    handshakeAuthorized <- withMeasure ctx (onNewHandshake $ serverHooks sparams)
-    unless handshakeAuthorized (throwCore $ Error_HandshakePolicy "server: handshake denied")
-    updateMeasure ctx incrementNbHandshakes
+    handshakeAuthorized <- liftIO $ withMeasure ctx (onNewHandshake $ serverHooks sparams)
+    unless handshakeAuthorized (left $ Error_HandshakePolicy "server: handshake denied")
+    liftIO $ updateMeasure ctx incrementNbHandshakes
 
     -- Handle Client hello
     processHandshake ctx clientHello
 
     -- rejecting SSL2. RFC 6176
-    when (clientVersion == SSL2) $ throwCore $ Error_Protocol ("SSL 2.0 is not supported", True, ProtocolVersion)
+    when (clientVersion == SSL2) $ left $ Error_Protocol ("SSL 2.0 is not supported", True, ProtocolVersion)
     -- rejecting SSL3. RFC 7568
-    -- when (clientVersion == SSL3) $ throwCore $ Error_Protocol ("SSL 3.0 is not supported", True, ProtocolVersion)
+    -- when (clientVersion == SSL3) $ left $ Error_Protocol ("SSL 3.0 is not supported", True, ProtocolVersion)
 
     -- Fallback SCSV: RFC7507
     -- TLS_FALLBACK_SCSV: {0x56, 0x00}
     when (supportedFallbackScsv (ctxSupported ctx) &&
           (0x5600 `elem` ciphers) &&
           clientVersion /= maxBound) $
-        throwCore $ Error_Protocol ("fallback is not allowed", True, InappropriateFallback)
+        left $ Error_Protocol ("fallback is not allowed", True, InappropriateFallback)
     chosenVersion <- case findHighestVersionFrom clientVersion (supportedVersions $ ctxSupported ctx) of
-                        Nothing -> throwCore $ Error_Protocol ("client version " ++ show clientVersion ++ " is not supported", True, ProtocolVersion)
+                        Nothing -> left $ Error_Protocol ("client version " ++ show clientVersion ++ " is not supported", True, ProtocolVersion)
                         Just v  -> return v
 
     -- If compression is null, commonCompressions should be [0].
-    when (null commonCompressions) $ throwCore $
+    when (null commonCompressions) $ left $
         Error_Protocol ("no compression in common with the client", True, HandshakeFailure)
 
     -- SNI (Server Name Indication)
@@ -128,7 +130,7 @@ handshakeServerWith sparams ctx clientHello@(ClientHello clientVersion _ clientS
                       toHostName (ServerNameOther _)           = Nothing
             _                    -> Nothing
 
-    extraCreds <- (onServerNameIndication $ serverHooks sparams) serverName
+    extraCreds <- liftIO $ (onServerNameIndication $ serverHooks sparams) serverName
 
     -- When selecting a cipher we must ensure that it is allowed for the
     -- TLS version but also that all its key-exchange requirements
@@ -172,7 +174,7 @@ handshakeServerWith sparams ctx clientHello@(ClientHello clientVersion _ clientS
     -- creds, check now before calling onCipherChoosing, which does not handle
     -- empty lists.
     let ciphersFilteredVersion = filter cipherAllowed (commonCiphers extraCreds)
-    when (null ciphersFilteredVersion) $ throwCore $
+    when (null ciphersFilteredVersion) $ left $
         Error_Protocol ("no cipher in common with the client", True, HandshakeFailure)
 
     let usedCipher = (onCipherChoosing $ serverHooks sparams) chosenVersion ciphersFilteredVersion
@@ -184,7 +186,7 @@ handshakeServerWith sparams ctx clientHello@(ClientHello clientVersion _ clientS
                 CipherKeyExchange_DHE_RSA   -> return $ credentialsFindForSigning RSA creds
                 CipherKeyExchange_DHE_DSS   -> return $ credentialsFindForSigning DSS creds
                 CipherKeyExchange_ECDHE_RSA -> return $ credentialsFindForSigning RSA creds
-                _                           -> throwCore $ Error_Protocol ("key exchange algorithm not implemented", True, HandshakeFailure)
+                _                           -> left $ Error_Protocol ("key exchange algorithm not implemented", True, HandshakeFailure)
 
     resumeSessionData <- case clientSession of
             (Session (Just clientSessionId)) ->
@@ -192,16 +194,16 @@ handshakeServerWith sparams ctx clientHello@(ClientHello clientVersion _ clientS
                  in validateSession serverName <$> resume
             (Session Nothing)                -> return Nothing
 
-    maybe (return ()) (usingState_ ctx . setClientSNI) serverName
+    maybe (return ()) (usingStateT ctx . setClientSNI) serverName
 
     case extensionLookup extensionID_ApplicationLayerProtocolNegotiation exts >>= extensionDecode False of
-        Just (ApplicationLayerProtocolNegotiation protos) -> usingState_ ctx $ setClientALPNSuggest protos
+        Just (ApplicationLayerProtocolNegotiation protos) -> usingStateT ctx $ setClientALPNSuggest protos
         _ -> return ()
 
     -- Currently, we don't send back EcPointFormats. In this case,
     -- the client chooses EcPointFormat_Uncompressed.
     case extensionLookup extensionID_EcPointFormats exts >>= extensionDecode False of
-        Just (EcPointFormatsSupported fs) -> usingState_ ctx $ setClientEcPointFormatSuggest fs
+        Just (EcPointFormatsSupported fs) -> usingStateT ctx $ setClientEcPointFormatSuggest fs
         _ -> return ()
 
     doHandshake sparams cred ctx chosenVersion usedCipher usedCompression clientSession resumeSessionData exts
@@ -225,11 +227,11 @@ handshakeServerWith sparams ctx clientHello@(ClientHello clientVersion _ clientS
             | otherwise                                     = m
 
 
-handshakeServerWith _ _ _ = throwCore $ Error_Protocol ("unexpected handshake message received in handshakeServerWith", True, HandshakeFailure)
+handshakeServerWith _ _ _ = left $ Error_Protocol ("unexpected handshake message received in handshakeServerWith", True, HandshakeFailure)
 
 doHandshake :: ServerParams -> Maybe Credential -> Context -> Version -> Cipher
             -> Compression -> Session -> Maybe SessionData
-            -> [ExtensionRaw] -> IO ()
+            -> [ExtensionRaw] -> ErrT TLSError IO ()
 doHandshake sparams mcred ctx chosenVersion usedCipher usedCompression clientSession resumeSessionData exts = do
     case resumeSessionData of
         Nothing -> do
@@ -239,10 +241,10 @@ doHandshake sparams mcred ctx chosenVersion usedCipher usedCompression clientSes
             recvClientData sparams ctx
             sendChangeCipherAndFinish ctx ServerRole
         Just sessionData -> do
-            usingState_ ctx (setSession clientSession True)
+            usingStateT ctx (setSession clientSession True)
             serverhello <- makeServerHello clientSession
             sendPacket ctx $ Handshake [serverhello]
-            usingHState ctx $ setMasterSecret chosenVersion ServerRole $ sessionSecret sessionData
+            usingHStateT ctx $ setMasterSecret chosenVersion ServerRole $ sessionSecret sessionData
             sendChangeCipherAndFinish ctx ServerRole
             recvChangeCipherAndFinish ctx
     handshakeTerminate ctx
@@ -250,11 +252,11 @@ doHandshake sparams mcred ctx chosenVersion usedCipher usedCompression clientSes
         clientALPNSuggest = isJust $ extensionLookup extensionID_ApplicationLayerProtocolNegotiation exts
 
         applicationProtocol | clientALPNSuggest = do
-            suggest <- usingState_ ctx getClientALPNSuggest
+            suggest <- usingStateT ctx getClientALPNSuggest
             case (onALPNClientSuggest $ serverHooks sparams, suggest) of
                 (Just io, Just protos) -> do
                     proto <- liftIO $ io protos
-                    usingState_ ctx $ do
+                    usingStateT ctx $ do
                         setExtensionALPN True
                         setNegotiatedProtocol proto
                     return [ ExtensionRaw extensionID_ApplicationLayerProtocolNegotiation
@@ -267,18 +269,19 @@ doHandshake sparams mcred ctx chosenVersion usedCipher usedCompression clientSes
         -- it is acceptable for the application.
         --
         ---
+        makeServerHello :: Session -> ErrT TLSError IO Handshake
         makeServerHello session = do
-            srand <- ServerRandom <$> getStateRNG ctx 32
+            srand <- ServerRandom <$> liftIO (getStateRNG ctx 32)
             case mcred of
-                Just (_, privkey) -> usingHState ctx $ setPrivateKey privkey
+                Just (_, privkey) -> usingHStateT ctx $ setPrivateKey privkey
                 _                 -> return () -- return a sensible error
 
             -- in TLS12, we need to check as well the certificates we are sending if they have in the extension
             -- the necessary bits set.
-            secReneg   <- usingState_ ctx getSecureRenegotiation
+            secReneg   <- usingStateT ctx getSecureRenegotiation
             secRengExt <- if secReneg
                     then do
-                            vf <- usingState_ ctx $ do
+                            vf <- usingStateT ctx $ do
                                     cvf <- getVerifiedData ClientRole
                                     svf <- getVerifiedData ServerRole
                                     return $ extensionEncode (SecureRenegotiation cvf $ Just svf)
@@ -286,11 +289,11 @@ doHandshake sparams mcred ctx chosenVersion usedCipher usedCompression clientSes
                     else return []
             protoExt <- applicationProtocol
             sniExt   <- do
-                resuming <- usingState_ ctx isSessionResuming
+                resuming <- usingStateT ctx isSessionResuming
                 if resuming
                   then return []
                   else do
-                    msni <- usingState_ ctx getClientSNI
+                    msni <- usingStateT ctx getClientSNI
                     case msni of
                       -- RFC6066: In this event, the server SHALL include
                       -- an extension of type "server_name" in the
@@ -299,14 +302,15 @@ doHandshake sparams mcred ctx chosenVersion usedCipher usedCompression clientSes
                       Just _  -> return [ ExtensionRaw extensionID_ServerName ""]
                       Nothing -> return []
             let extensions = secRengExt ++ protoExt ++ sniExt
-            usingState_ ctx (setVersion chosenVersion)
-            usingHState ctx $ setServerHelloParameters chosenVersion srand usedCipher usedCompression
+            usingStateT ctx (setVersion chosenVersion)
+            usingHStateT ctx $ setServerHelloParameters chosenVersion srand usedCipher usedCompression
             return $ ServerHello chosenVersion srand session (cipherID usedCipher)
                                                (compressionID usedCompression) extensions
 
+        handshakeSendServerData :: ErrT TLSError IO ()
         handshakeSendServerData = do
-            serverSession <- newSession ctx
-            usingState_ ctx (setSession serverSession False)
+            serverSession <- liftIO $ newSession ctx
+            usingStateT ctx (setSession serverSession False)
             serverhello   <- makeServerHello serverSession
             -- send ServerHello & Certificate & ServerKeyXchg & CertReq
             let certMsg = case mcred of
@@ -321,7 +325,7 @@ doHandshake sparams mcred ctx chosenVersion usedCipher usedCompression clientSes
                         CipherKeyExchange_DHE_DSS -> Just <$> generateSKX_DHE DSS
                         CipherKeyExchange_ECDHE_RSA -> Just <$> generateSKX_ECDHE RSA
                         _                         -> return Nothing
-            maybe (return ()) (sendPacket ctx . Handshake . (:[]) . ServerKeyXchg) skx
+            maybe (return ()) (newErrT . sendPacket ctx . Handshake . (:[]) . ServerKeyXchg) skx
 
             -- FIXME we don't do this on a Anonymous server
 
@@ -330,30 +334,31 @@ doHandshake sparams mcred ctx chosenVersion usedCipher usedCompression clientSes
             -- certificates.
             --
             when (serverWantClientCert sparams) $ do
-                usedVersion <- usingState_ ctx getVersion
+                usedVersion <- usingStateT ctx getVersion
                 let certTypes = [ CertificateType_RSA_Sign ]
                     hashSigs = if usedVersion < TLS12
                                    then Nothing
                                    else Just (supportedHashSignatures $ ctxSupported ctx)
                     creq = CertRequest certTypes hashSigs
                                (map extractCAname $ serverCACertificates sparams)
-                usingHState ctx $ setCertReqSent True
-                sendPacket ctx (Handshake [creq])
+                usingHStateT ctx $ setCertReqSent True
+                newErrT $ sendPacket ctx (Handshake [creq])
 
             -- Send HelloDone
-            sendPacket ctx (Handshake [ServerHelloDone])
+            newErrT $ sendPacket ctx (Handshake [ServerHelloDone])
 
         extractCAname :: SignedCertificate -> DistinguishedName
         extractCAname cert = certSubjectDN $ getCertificate cert
 
+        setup_DHE :: ErrT TLSError IO ServerDHParams
         setup_DHE = do
             let dhparams = fromJust "server DHE Params" $ serverDHEParams sparams
-            (priv, pub) <- generateDHE ctx dhparams
+            (priv, pub) <- liftIO $ generateDHE ctx dhparams
 
             let serverParams = serverDHParamsFrom dhparams pub
 
-            usingHState ctx $ setServerDHParams serverParams
-            usingHState ctx $ setDHPrivate priv
+            usingHStateT ctx $ setServerDHParams serverParams
+            usingHStateT ctx $ setDHPrivate priv
             return serverParams
 
         -- Choosing a hash algorithm to sign (EC)DHE parameters
@@ -363,7 +368,7 @@ doHandshake sparams mcred ctx chosenVersion usedCipher usedCompression clientSes
         -- If RSA is also used for key exchange, this function is
         -- not called.
         decideHashSig sigAlg = do
-            usedVersion <- usingState_ ctx getVersion
+            usedVersion <- usingStateT ctx getVersion
             case usedVersion of
               TLS12 -> do
                   let hashSigs = hashAndSignaturesInCommon ctx exts
@@ -384,23 +389,23 @@ doHandshake sparams mcred ctx chosenVersion usedCipher usedCompression clientSes
         generateSKX_DH_Anon = SKX_DH_Anon <$> setup_DHE
 
         setup_ECDHE grp = do
-            (srvpri, srvpub) <- generateECDHE ctx grp
+            (srvpri, srvpub) <- liftIO $ generateECDHE ctx grp
             let serverParams = ServerECDHParams grp srvpub
-            usingHState ctx $ setServerECDHParams serverParams
-            usingHState ctx $ setECDHPrivate srvpri
+            usingHStateT ctx $ setServerECDHParams serverParams
+            usingHStateT ctx $ setECDHPrivate srvpri
             return serverParams
 
         generateSKX_ECDHE sigAlg = do
             let possibleGroups = negotiatedGroupsInCommon ctx exts
             grp <- case possibleGroups of
-                     []  -> throwCore $ Error_Protocol ("no common group", True, HandshakeFailure)
+                     []  -> left $ Error_Protocol ("no common group", True, HandshakeFailure)
                      g:_ -> return g
             serverParams <- setup_ECDHE grp
             mhashSig <- decideHashSig sigAlg
             signed <- digitallySignECDHParams ctx serverParams sigAlg mhashSig
             case sigAlg of
                 RSA -> return $ SKX_ECDHE_RSA serverParams signed
-                _   -> error ("generate skx_ecdhe unsupported signature type: " ++ show sigAlg)
+                _   -> left $ Error_Protocol ("generate skx_ecdhe unsupported signature type: " ++ show sigAlg, True, HandshakeFailure)
 
         -- create a DigitallySigned objects for DHParams or ECDHParams.
 
@@ -412,11 +417,12 @@ doHandshake sparams mcred ctx chosenVersion usedCipher usedCompression clientSes
 --      <- change cipher
 --      <- finish
 --
-recvClientData :: ServerParams -> Context -> IO ()
+recvClientData :: ServerParams -> Context -> ErrT TLSError IO ()
 recvClientData sparams ctx = runRecvState ctx (RecvStateHandshake processClientCertificate)
-  where processClientCertificate (Certificates certs) = do
+  where processClientCertificate :: Handshake -> ErrT TLSError IO (RecvState (ErrT TLSError IO))
+        processClientCertificate (Certificates certs) = do
             -- run certificate recv hook
-            ctxWithHooks ctx (\hooks -> hookRecvCertificates hooks certs)
+            liftIO $ ctxWithHooks ctx (\hooks -> hookRecvCertificates hooks certs)
             -- Call application callback to see whether the
             -- certificate chain is acceptable.
             --
@@ -427,7 +433,7 @@ recvClientData sparams ctx = runRecvState ctx (RecvStateHandshake processClientC
 
             -- Remember cert chain for later use.
             --
-            usingHState ctx $ setClientCertChain certs
+            usingHStateT ctx $ setClientCertChain certs
 
             -- FIXME: We should check whether the certificate
             -- matches our request and that we support
@@ -439,6 +445,8 @@ recvClientData sparams ctx = runRecvState ctx (RecvStateHandshake processClientC
 
         -- cannot use RecvStateHandshake, as the next message could be a ChangeCipher,
         -- so we must process any packet, and in case of handshake call processHandshake manually.
+        processClientKeyExchange :: Handshake -> ErrT TLSError IO (RecvState (ErrT TLSError IO))
+
         processClientKeyExchange (ClientKeyXchg _) = return $ RecvStateNext processCertificateVerify
         processClientKeyExchange p                 = unexpected (show p) (Just "client key exchange")
 
@@ -450,9 +458,9 @@ recvClientData sparams ctx = runRecvState ctx (RecvStateHandshake processClientC
 
             checkValidClientCertChain "change cipher message expected"
 
-            usedVersion <- usingState_ ctx getVersion
+            usedVersion <- usingStateT ctx getVersion
             -- Fetch all handshake messages up to now.
-            msgs  <- usingHState ctx $ B.concat <$> getHandshakeMessages
+            msgs  <- usingHStateT ctx $ B.concat <$> getHandshakeMessages
 
             sigAlgExpected <- getRemoteSignatureAlg
 
@@ -465,9 +473,10 @@ recvClientData sparams ctx = runRecvState ctx (RecvStateHandshake processClientC
                     -- When verification succeeds, commit the
                     -- client certificate chain to the context.
                     --
-                    Just certs <- usingHState ctx getClientCertChain
-                    usingState_ ctx $ setClientCertificateChain certs
-                    return ()
+                    mcerts <- usingHStateT ctx getClientCertChain
+                    mcase mcerts
+                        (left $ Error_Protocol ("verification failed", True, BadCertificate))
+                        (usingStateT ctx . setClientCertificateChain)
 
                 False -> do
                     -- Either verification failed because of an
@@ -482,26 +491,28 @@ recvClientData sparams ctx = runRecvState ctx (RecvStateHandshake processClientC
                             -- application callbacks accepts, we
                             -- also commit the client certificate
                             -- chain to the context.
-                            Just certs <- usingHState ctx getClientCertChain
-                            usingState_ ctx $ setClientCertificateChain certs
-                        else throwCore $ Error_Protocol ("verification failed", True, BadCertificate)
+                            mcerts <- usingHStateT ctx getClientCertChain
+                            mcase mcerts
+                                (left $ Error_Protocol ("verification failed", True, BadCertificate))
+                                (usingStateT ctx . setClientCertificateChain)
+                        else left $ Error_Protocol ("verification failed", True, BadCertificate)
             return $ RecvStateNext expectChangeCipher
 
         processCertificateVerify p = do
-            chain <- usingHState ctx getClientCertChain
+            chain <- usingHStateT ctx getClientCertChain
             case chain of
                 Just cc | isNullCertificateChain cc -> return ()
-                        | otherwise                 -> throwCore $ Error_Protocol ("cert verify message missing", True, UnexpectedMessage)
+                        | otherwise                 -> left $ Error_Protocol ("cert verify message missing", True, UnexpectedMessage)
                 Nothing -> return ()
             expectChangeCipher p
 
         getRemoteSignatureAlg = do
-            pk <- usingHState ctx getRemotePublicKey
+            pk <- usingHStateT ctx getRemotePublicKey
             case pk of
                 PubKeyRSA _   -> return RSA
                 PubKeyDSA _   -> return DSS
                 PubKeyEC  _   -> return ECDSA
-                _             -> throwCore $ Error_Protocol ("unsupported remote public key type", True, HandshakeFailure)
+                _             -> left $ Error_Protocol ("unsupported remote public key type", True, HandshakeFailure)
 
         expectChangeCipher ChangeCipherSpec = do
             return $ RecvStateHandshake $ expectFinish
@@ -512,11 +523,11 @@ recvClientData sparams ctx = runRecvState ctx (RecvStateHandshake processClientC
         expectFinish p            = unexpected (show p) (Just "Handshake Finished")
 
         checkValidClientCertChain msg = do
-            chain <- usingHState ctx getClientCertChain
+            chain <- usingHStateT ctx getClientCertChain
             let throwerror = Error_Protocol (msg , True, UnexpectedMessage)
             case chain of
-                Nothing -> throwCore throwerror
-                Just cc | isNullCertificateChain cc -> throwCore throwerror
+                Nothing -> left throwerror
+                Just cc | isNullCertificateChain cc -> left throwerror
                         | otherwise                 -> return ()
 
 hashAndSignaturesInCommon :: Context -> [ExtensionRaw] -> [HashAndSignatureAlgorithm]

@@ -33,25 +33,25 @@ import Network.TLS.Extension
 import Network.TLS.Parameters
 import Data.X509 (CertificateChain(..), Certificate(..), getCertificate)
 
-processHandshake :: Context -> Handshake -> IO ()
+processHandshake :: Context -> Handshake -> ErrT TLSError IO ()
 processHandshake ctx hs = do
-    role <- usingState_ ctx isClientContext
+    role <- usingStateT ctx isClientContext
     case hs of
         ClientHello cver ran _ cids _ ex _ -> when (role == ServerRole) $ do
-            mapM_ (usingState_ ctx . processClientExtension) ex
+            mapM_ (usingStateT ctx . processClientExtension) ex
             -- RFC 5746: secure renegotiation
             -- TLS_EMPTY_RENEGOTIATION_INFO_SCSV: {0x00, 0xFF}
             when (secureRenegotiation && (0xff `elem` cids)) $
-                usingState_ ctx $ setSecureRenegotiation True
-            startHandshake ctx cver ran
-        Certificates certs            -> processCertificates role certs
+                usingStateT ctx $ setSecureRenegotiation True
+            liftIO $ startHandshake ctx cver ran
+        Certificates certs            -> liftIO $ processCertificates role certs
         ClientKeyXchg content         -> when (role == ServerRole) $ do
             processClientKeyXchg ctx content
         Finished fdata                -> processClientFinished ctx fdata
         _                             -> return ()
     let encoded = encodeHandshake hs
-    when (certVerifyHandshakeMaterial hs) $ usingHState ctx $ addHandshakeMessage encoded
-    when (finishHandshakeTypeMaterial $ typeOfHandshake hs) $ usingHState ctx $ updateHandshakeDigest encoded
+    when (certVerifyHandshakeMaterial hs) $ usingHStateT ctx $ addHandshakeMessage encoded
+    when (finishHandshakeTypeMaterial $ typeOfHandshake hs) $ usingHStateT ctx $ updateHandshakeDigest encoded
   where secureRenegotiation = supportedSecureRenegotiation $ ctxSupported ctx
         -- RFC5746: secure renegotiation
         -- the renegotiation_info extension: 0xff01
@@ -69,18 +69,18 @@ processHandshake ctx hs = do
         processCertificates ClientRole (CertificateChain []) =
             throwCore $ Error_Protocol ("server certificate missing", True, HandshakeFailure)
         processCertificates _ (CertificateChain (c:_)) =
-            usingHState ctx $ setPublicKey pubkey
+            usingHState_ ctx $ setPublicKey pubkey
           where pubkey = certPubKey $ getCertificate c
 
 -- process the client key exchange message. the protocol expects the initial
 -- client version received in ClientHello, not the negotiated version.
 -- in case the version mismatch, generate a random master secret
-processClientKeyXchg :: Context -> ClientKeyXchgAlgorithmData -> IO ()
+processClientKeyXchg :: Context -> ClientKeyXchgAlgorithmData -> ErrT TLSError IO ()
 processClientKeyXchg ctx (CKX_RSA encryptedPremaster) = do
-    (rver, role, random) <- usingState_ ctx $ do
+    (rver, role, random) <- usingStateT ctx $ do
         (,,) <$> getVersion <*> isClientContext <*> genRandom 48
-    ePremaster <- decryptRSA ctx encryptedPremaster
-    usingHState ctx $ do
+    ePremaster <- liftIO $ decryptRSA ctx encryptedPremaster
+    usingHStateT ctx $ do
         expectedVer <- gets hstClientVersion
         case ePremaster of
             Left _          -> setMasterSecretFromPre rver role random
@@ -90,34 +90,34 @@ processClientKeyXchg ctx (CKX_RSA encryptedPremaster) = do
                     | ver /= expectedVer -> setMasterSecretFromPre rver role random
                     | otherwise          -> setMasterSecretFromPre rver role premaster
 processClientKeyXchg ctx (CKX_DH clientDHValue) = do
-    rver <- usingState_ ctx getVersion
-    role <- usingState_ ctx isClientContext
+    rver <- usingStateT ctx getVersion
+    role <- usingStateT ctx isClientContext
 
-    serverParams <- usingHState ctx getServerDHParams
-    dhpriv       <- usingHState ctx getDHPrivate
+    serverParams <- usingHStateT ctx getServerDHParams
+    dhpriv       <- usingHStateT ctx getDHPrivate
     let premaster = dhGetShared (serverDHParamsToParams serverParams) dhpriv clientDHValue
-    usingHState ctx $ setMasterSecretFromPre rver role premaster
+    usingHStateT ctx $ setMasterSecretFromPre rver role premaster
 
 processClientKeyXchg ctx (CKX_ECDH bytes) = do
-    ServerECDHParams grp _ <- usingHState ctx getServerECDHParams
+    ServerECDHParams grp _ <- usingHStateT ctx getServerECDHParams
     case decodeGroupPublic grp bytes of
-      Left _ -> throwCore $ Error_Protocol ("client public key cannot be decoded", True, HandshakeFailure)
+      Left _ -> left $ Error_Protocol ("client public key cannot be decoded", True, HandshakeFailure)
       Right clipub -> do
-          srvpri <- usingHState ctx getECDHPrivate
+          srvpri <- usingHStateT ctx getECDHPrivate
           case groupGetShared clipub srvpri of
               Just premaster -> do
-                  rver <- usingState_ ctx getVersion
-                  role <- usingState_ ctx isClientContext
-                  usingHState ctx $ setMasterSecretFromPre rver role premaster
+                  rver <- usingStateT ctx getVersion
+                  role <- usingStateT ctx isClientContext
+                  usingHStateT ctx $ setMasterSecretFromPre rver role premaster
               Nothing -> throwCore $ Error_Protocol ("cannote generate a shared secret on ECDH", True, HandshakeFailure)
 
-processClientFinished :: Context -> FinishedData -> IO ()
+processClientFinished :: Context -> FinishedData -> ErrT TLSError IO ()
 processClientFinished ctx fdata = do
-    (cc,ver) <- usingState_ ctx $ (,) <$> isClientContext <*> getVersion
-    expected <- usingHState ctx $ getHandshakeDigest ver $ invertRole cc
+    (cc,ver) <- usingStateT ctx $ (,) <$> isClientContext <*> getVersion
+    expected <- usingHStateT ctx $ getHandshakeDigest ver $ invertRole cc
     when (expected /= fdata) $ do
-        throwCore $ Error_Protocol("bad record mac", True, BadRecordMac)
-    usingState_ ctx $ updateVerifiedData ServerRole fdata
+        left $ Error_Protocol("bad record mac", True, BadRecordMac)
+    usingStateT ctx $ updateVerifiedData ServerRole fdata
     return ()
 
 -- initialize a new Handshake context (initial handshake or renegotiations)

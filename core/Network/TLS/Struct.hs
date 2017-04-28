@@ -146,6 +146,7 @@ data TLSError =
     | Error_Packet String
     | Error_Packet_unexpected String String
     | Error_Packet_Parsing String
+    | Error_Exception TLSException
     deriving (Eq, Show, Typeable)
 
 #if MIN_VERSION_mtl(2,2,1)

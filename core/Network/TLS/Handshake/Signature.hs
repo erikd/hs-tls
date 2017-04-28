@@ -27,6 +27,7 @@ import Network.TLS.State
 import Network.TLS.Handshake.State
 import Network.TLS.Handshake.Key
 import Network.TLS.Util
+import Network.TLS.ErrT
 
 import Control.Monad.State.Strict
 
@@ -44,7 +45,7 @@ checkCertificateVerify :: Context
                        -> DigitalSignatureAlg
                        -> ByteString
                        -> DigitallySigned
-                       -> IO Bool
+                       -> ErrT TLSError IO Bool
 checkCertificateVerify ctx usedVersion sigAlgExpected msgs digSig@(DigitallySigned hashSigAlg _) =
     case (usedVersion, hashSigAlg) of
         (TLS12, Nothing)    -> return False
@@ -62,7 +63,7 @@ createCertificateVerify :: Context
                         -> DigitalSignatureAlg
                         -> Maybe HashAndSignatureAlgorithm -- TLS12 only
                         -> ByteString
-                        -> IO DigitallySigned
+                        -> ErrT TLSError IO DigitallySigned
 createCertificateVerify ctx usedVersion sigAlg hashSigAlg msgs =
     prepareCertificateVerifySignatureData ctx usedVersion sigAlg hashSigAlg msgs >>=
     signatureCreateWithCertVerifyData ctx hashSigAlg
@@ -80,7 +81,7 @@ prepareCertificateVerifySignatureData :: Context
                                       -> DigitalSignatureAlg
                                       -> Maybe HashAndSignatureAlgorithm -- TLS12 only
                                       -> ByteString
-                                      -> IO CertVerifyData
+                                      -> ErrT TLSError IO CertVerifyData
 prepareCertificateVerifySignatureData ctx usedVersion sigAlg hashSigAlg msgs
     | usedVersion == SSL3 = do
         (hashCtx, params, generateCV_SSL) <-
@@ -88,7 +89,7 @@ prepareCertificateVerifySignatureData ctx usedVersion sigAlg hashSigAlg msgs
                 RSA -> return (hashInit SHA1_MD5, RSAParams SHA1_MD5 RSApkcs1, generateCertificateVerify_SSL)
                 DSS -> return (hashInit SHA1, DSSParams, generateCertificateVerify_SSL_DSS)
                 _   -> throwCore $ Error_Misc ("unsupported CertificateVerify signature for SSL3: " ++ show sigAlg)
-        Just masterSecret <- usingHState ctx $ gets hstMasterSecret
+        Just masterSecret <- usingHStateT ctx $ gets hstMasterSecret
         return (params, generateCV_SSL masterSecret $ hashUpdate hashCtx msgs)
     | usedVersion == TLS10 || usedVersion == TLS11 =
             return $ buildVerifyData (signatureParams sigAlg Nothing) msgs
@@ -127,14 +128,14 @@ signatureParams sig _ = error ("unimplemented signature type: " ++ show sig)
 signatureCreateWithCertVerifyData :: Context
                                   -> Maybe HashAndSignatureAlgorithm
                                   -> CertVerifyData
-                                  -> IO DigitallySigned
+                                  -> ErrT TLSError IO DigitallySigned
 signatureCreateWithCertVerifyData ctx malg (sigParam, toSign) = do
-    cc <- usingState_ ctx $ isClientContext
-    DigitallySigned malg <$> signPrivate ctx cc sigParam toSign
+    cc <- usingStateT ctx $ isClientContext
+    DigitallySigned malg <$> liftIO (signPrivate ctx cc sigParam toSign)
 
-signatureVerify :: Context -> DigitallySigned -> DigitalSignatureAlg -> ByteString -> IO Bool
+signatureVerify :: Context -> DigitallySigned -> DigitalSignatureAlg -> ByteString -> ErrT TLSError IO Bool
 signatureVerify ctx digSig@(DigitallySigned hashSigAlg _) sigAlgExpected toVerifyData = do
-    usedVersion <- usingState_ ctx getVersion
+    usedVersion <- usingStateT ctx getVersion
     let (sigParam, toVerify) =
             case (usedVersion, hashSigAlg) of
                 (TLS12, Nothing)    -> error "expecting hash and signature algorithm in a TLS12 digitally signed structure"
@@ -147,12 +148,12 @@ signatureVerify ctx digSig@(DigitallySigned hashSigAlg _) sigAlgExpected toVerif
 signatureVerifyWithCertVerifyData :: Context
                                   -> DigitallySigned
                                   -> CertVerifyData
-                                  -> IO Bool
+                                  -> ErrT TLSError IO Bool
 signatureVerifyWithCertVerifyData ctx (DigitallySigned _ bs) (sigParam, toVerify) = do
-    cc <- usingState_ ctx $ isClientContext
+    cc <- usingStateT ctx $ isClientContext
     verifyPublic ctx cc sigParam toVerify bs
 
-digitallySignParams :: Context -> ByteString -> DigitalSignatureAlg -> Maybe HashAndSignatureAlgorithm -> IO DigitallySigned
+digitallySignParams :: Context -> ByteString -> DigitalSignatureAlg -> Maybe HashAndSignatureAlgorithm -> ErrT TLSError IO DigitallySigned
 digitallySignParams ctx signatureData sigAlg hashSigAlg =
     let sigParam = signatureParams sigAlg hashSigAlg
      in signatureCreateWithCertVerifyData ctx hashSigAlg (buildVerifyData sigParam signatureData)
@@ -161,7 +162,7 @@ digitallySignDHParams :: Context
                       -> ServerDHParams
                       -> DigitalSignatureAlg
                       -> Maybe HashAndSignatureAlgorithm -- TLS12 only
-                      -> IO DigitallySigned
+                      -> ErrT TLSError IO DigitallySigned
 digitallySignDHParams ctx serverParams sigAlg mhash = do
     dhParamsData <- withClientAndServerRandom ctx $ encodeSignedDHParams serverParams
     digitallySignParams ctx dhParamsData sigAlg mhash
@@ -170,7 +171,7 @@ digitallySignECDHParams :: Context
                         -> ServerECDHParams
                         -> DigitalSignatureAlg
                         -> Maybe HashAndSignatureAlgorithm -- TLS12 only
-                        -> IO DigitallySigned
+                        -> ErrT TLSError IO DigitallySigned
 digitallySignECDHParams ctx serverParams sigAlg mhash = do
     ecdhParamsData <- withClientAndServerRandom ctx $ encodeSignedECDHParams serverParams
     digitallySignParams ctx ecdhParamsData sigAlg mhash
@@ -179,7 +180,7 @@ digitallySignDHParamsVerify :: Context
                             -> ServerDHParams
                             -> DigitalSignatureAlg
                             -> DigitallySigned
-                            -> IO Bool
+                            -> ErrT TLSError IO Bool
 digitallySignDHParamsVerify ctx dhparams sigAlg signature = do
     expectedData <- withClientAndServerRandom ctx $ encodeSignedDHParams dhparams
     signatureVerify ctx signature sigAlg expectedData
@@ -188,13 +189,13 @@ digitallySignECDHParamsVerify :: Context
                               -> ServerECDHParams
                               -> DigitalSignatureAlg
                               -> DigitallySigned
-                              -> IO Bool
+                              -> ErrT TLSError IO Bool
 digitallySignECDHParamsVerify ctx dhparams sigAlg signature = do
     expectedData <- withClientAndServerRandom ctx $ encodeSignedECDHParams dhparams
     signatureVerify ctx signature sigAlg expectedData
 
-withClientAndServerRandom :: Context -> (ClientRandom -> ServerRandom -> b) -> IO b
+withClientAndServerRandom :: Context -> (ClientRandom -> ServerRandom -> b) -> ErrT TLSError IO b
 withClientAndServerRandom ctx f = do
-    (cran, sran) <- usingHState ctx $ (,) <$> gets hstClientRandom
+    (cran, sran) <- usingHStateT ctx $ (,) <$> gets hstClientRandom
                                           <*> (fromJust "withClientAndServer : server random" <$> gets hstServerRandom)
     return $ f cran sran

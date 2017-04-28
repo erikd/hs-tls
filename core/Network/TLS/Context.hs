@@ -30,9 +30,12 @@ module Network.TLS.Context
     , updateMeasure
     , withMeasure
     , withReadLock
+    , withReadLockT
     , withWriteLock
+    , withWriteLockT
     , withStateLock
     , withRWLock
+    , withRWLockT
 
     -- * information
     , Information(..)
@@ -55,6 +58,7 @@ module Network.TLS.Context
     , throwCore
     , usingState
     , usingState_
+    , usingStateT
     , runTxState
     , runRxState
     , usingHState
@@ -77,6 +81,7 @@ import Network.TLS.Types (Role(..))
 import Network.TLS.Handshake (handshakeClient, handshakeClientWith, handshakeServer, handshakeServerWith)
 import Network.TLS.X509
 import Network.TLS.RNG
+import Network.TLS.ErrT
 import Data.Maybe (isJust)
 
 import Control.Concurrent.MVar
@@ -94,8 +99,8 @@ class TLSParams a where
     getTLSCommonParams :: a -> CommonParams
     getTLSRole         :: a -> Role
     getCiphers         :: a -> Credentials -> [Cipher]
-    doHandshake        :: a -> Context -> IO ()
-    doHandshakeWith    :: a -> Context -> Handshake -> IO ()
+    doHandshake        :: a -> Context -> ErrT TLSError IO ()
+    doHandshakeWith    :: a -> Context -> Handshake -> ErrT TLSError IO ()
 
 instance TLSParams ClientParams where
     getTLSCommonParams cparams = ( clientSupported cparams

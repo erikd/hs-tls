@@ -35,9 +35,12 @@ module Network.TLS.Context.Internal
     , updateMeasure
     , withMeasure
     , withReadLock
+    , withReadLockT
     , withWriteLock
+    , withWriteLockT
     , withStateLock
     , withRWLock
+    , withRWLockT
 
     -- * information
     , Information(..)
@@ -47,9 +50,13 @@ module Network.TLS.Context.Internal
     , throwCore
     , usingState
     , usingState_
+    , usingStateT
     , runTxState
+    , runTxStateT
     , runRxState
     , usingHState
+    , usingHState_
+    , usingHStateT
     , getHState
     , getStateRNG
     ) where
@@ -66,6 +73,7 @@ import Network.TLS.Hooks
 import Network.TLS.Record.State
 import Network.TLS.Parameters
 import Network.TLS.Measurement
+import Network.TLS.ErrT
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
 
@@ -104,8 +112,8 @@ data Context = Context
     , ctxTxState          :: MVar RecordState -- ^ current tx state
     , ctxRxState          :: MVar RecordState -- ^ current rx state
     , ctxHandshake        :: MVar (Maybe HandshakeState) -- ^ optional handshake state
-    , ctxDoHandshake      :: Context -> IO ()
-    , ctxDoHandshakeWith  :: Context -> Handshake -> IO ()
+    , ctxDoHandshake      :: Context -> ErrT TLSError IO ()
+    , ctxDoHandshakeWith  :: Context -> Handshake -> ErrT TLSError IO ()
     , ctxHooks            :: IORef Hooks   -- ^ hooks for this context
     , ctxLockWrite        :: MVar ()       -- ^ lock to use for writing data (including updating the state)
     , ctxLockRead         :: MVar ()       -- ^ lock to use for reading data (including updating the state)
@@ -137,10 +145,13 @@ contextGetInformation ctx = do
                                        Just (hstClientRandom st),
                                        hstServerRandom st)
                            Nothing -> (Nothing, Nothing, Nothing)
-    (cipher,comp) <- failOnEitherError $ runRxState ctx $ gets $ \st -> (stCipher st, stCompression st)
-    case (ver, cipher) of
-        (Just v, Just c) -> return $ Just $ Information v c comp ms cr sr
-        _                -> return Nothing
+    res <- runRxState ctx $ gets $ \st -> (stCipher st, stCompression st)
+    case res of
+        Left _ -> return Nothing
+        Right (cipher,comp) ->
+            case (ver, cipher) of
+                (Just v, Just c) -> return $ Just $ Information v c comp ms cr sr
+                _                -> return Nothing
 
 contextSend :: Context -> ByteString -> IO ()
 contextSend c b = updateMeasure c (addBytesSent $ B.length b) >> (backendSend $ ctxConnection c) b
@@ -178,27 +189,31 @@ withLog ctx f = ctxWithHooks ctx (f . hookLogging)
 throwCore :: (MonadIO m, Exception e) => e -> m a
 throwCore = liftIO . throwIO
 
-failOnEitherError :: MonadIO m => m (Either TLSError a) -> m a
-failOnEitherError f = do
-    ret <- f
-    case ret of
-        Left err -> throwCore err
-        Right r  -> return r
-
 usingState :: Context -> TLSSt a -> IO (Either TLSError a)
 usingState ctx f =
     modifyMVar (ctxState ctx) $ \st ->
             let (a, newst) = runTLSState f st
              in newst `seq` return (newst, a)
 
-usingState_ :: Context -> TLSSt a -> IO a
-usingState_ ctx f = failOnEitherError $ usingState ctx f
+usingStateT :: Context -> TLSSt a -> ErrT TLSError IO a
+usingStateT ctx = newErrT . usingState ctx
 
-usingHState :: Context -> HandshakeM a -> IO a
+usingState_ :: Context -> TLSSt a -> IO a
+usingState_ ctx f =
+    either throwCore return =<< usingState ctx f
+
+usingHState :: Context -> HandshakeM a -> IO (Either TLSError a)
 usingHState ctx f = liftIO $ modifyMVar (ctxHandshake ctx) $ \mst ->
     case mst of
-        Nothing -> throwCore $ Error_Misc "missing handshake"
+        Nothing -> return $ (Nothing, Left $ Error_Misc "missing handshake")
         Just st -> return $ swap (Just `fmap` runHandshake st f)
+
+usingHState_ :: Context -> HandshakeM a -> IO a
+usingHState_ ctx f =
+    either throwCore return =<< usingHState ctx f
+
+usingHStateT :: Context -> HandshakeM a -> ErrT TLSError IO a
+usingHStateT ctx = newErrT . usingHState ctx
 
 getHState :: Context -> IO (Maybe HandshakeState)
 getHState ctx = liftIO $ readMVar (ctxHandshake ctx)
@@ -210,6 +225,9 @@ runTxState ctx f = do
         case runRecordM f ver st of
             Left err         -> return (st, Left err)
             Right (a, newSt) -> return (newSt, Right a)
+
+runTxStateT :: Context -> RecordM a -> ErrT TLSError IO a
+runTxStateT ctx = newErrT . runTxState ctx
 
 runRxState :: Context -> RecordM a -> IO (Either TLSError a)
 runRxState ctx f = do
@@ -225,11 +243,20 @@ getStateRNG ctx n = usingState_ ctx $ genRandom n
 withReadLock :: Context -> IO a -> IO a
 withReadLock ctx f = withMVar (ctxLockRead ctx) (const f)
 
+withReadLockT :: Context -> ErrT TLSError IO a -> ErrT TLSError IO a
+withReadLockT ctx f = liftIO (takeMVar $ ctxLockRead ctx) >> f
+
 withWriteLock :: Context -> IO a -> IO a
 withWriteLock ctx f = withMVar (ctxLockWrite ctx) (const f)
 
+withWriteLockT :: Context -> ErrT TLSError IO a -> ErrT TLSError IO a
+withWriteLockT ctx f = liftIO (takeMVar $ ctxLockWrite ctx) >> f
+
 withRWLock :: Context -> IO a -> IO a
 withRWLock ctx f = withReadLock ctx $ withWriteLock ctx f
+
+withRWLockT :: Context -> ErrT TLSError IO a -> ErrT TLSError IO a
+withRWLockT ctx f = withReadLockT ctx $ withWriteLockT ctx f
 
 withStateLock :: Context -> IO a -> IO a
 withStateLock ctx f = withMVar (ctxLockState ctx) (const f)

@@ -8,6 +8,7 @@
 --
 module Network.TLS.IO
     ( checkValid
+    , checkValidT
     , sendPacket
     , recvPacket
     ) where
@@ -19,6 +20,7 @@ import Network.TLS.Packet
 import Network.TLS.Hooks
 import Network.TLS.Sending
 import Network.TLS.Receiving
+import Network.TLS.ErrT
 import qualified Data.ByteString as B
 import Data.ByteString.Char8 (ByteString)
 
@@ -33,6 +35,13 @@ checkValid ctx = do
     unless established $ throwIO ConnectionNotEstablished
     eofed <- ctxEOF ctx
     when eofed $ throwIO $ mkIOError eofErrorType "data" Nothing Nothing
+
+checkValidT :: Context -> ErrT TLSError IO ()
+checkValidT ctx = do
+    established <- liftIO $ ctxEstablished ctx
+    unless established $ left $ Error_Misc "Connection not established."
+    eofed <- liftIO $ ctxEOF ctx
+    when eofed $ left Error_EOF
 
 readExact :: Context -> Int -> IO (Either TLSError ByteString)
 readExact ctx sz = do
@@ -112,21 +121,21 @@ recvPacket ctx = liftIO $ do
             return pkt
 
 -- | Send one packet to the context
-sendPacket :: MonadIO m => Context -> Packet -> m ()
-sendPacket ctx pkt = do
+sendPacket :: MonadIO m => Context -> Packet -> m (Either TLSError ())
+sendPacket ctx = liftIO . runErrT . sendPacketT ctx
+
+sendPacketT :: Context -> Packet -> ErrT TLSError IO ()
+sendPacketT ctx pkt = do
     -- in ver <= TLS1.0, block ciphers using CBC are using CBC residue as IV, which can be guessed
     -- by an attacker. Hence, an empty packet is sent before a normal data packet, to
     -- prevent guessability.
-    withEmptyPacket <- liftIO $ readIORef $ ctxNeedEmptyPacket ctx
-    when (isNonNullAppData pkt && withEmptyPacket) $ sendPacket ctx $ AppData B.empty
+    withEmptyPacket <- liftIO . readIORef $ ctxNeedEmptyPacket ctx
+    when (isNonNullAppData pkt && withEmptyPacket) $ sendPacketT ctx $ AppData B.empty
 
-    edataToSend <- liftIO $ do
-                        withLog ctx $ \logging -> loggingPacketSent logging (show pkt)
-                        writePacket ctx pkt
-    case edataToSend of
-        Left err         -> throwCore err
-        Right dataToSend -> liftIO $ do
-            withLog ctx $ \logging -> loggingIOSent logging dataToSend
-            contextSend ctx dataToSend
+    liftIO $ withLog ctx $ \logging -> loggingPacketSent logging (show pkt)
+    dataToSend <- writePacket ctx pkt
+    liftIO $ do
+        withLog ctx $ \logging -> loggingIOSent logging dataToSend
+        contextSend ctx dataToSend
   where isNonNullAppData (AppData b) = not $ B.null b
         isNonNullAppData _           = False

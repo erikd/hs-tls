@@ -5,6 +5,8 @@ module Network.TLS.Util
         , partition3
         , partition6
         , fromJust
+        , maybeToRight
+        , mcase
         , and'
         , (&&!)
         , bytesEq
@@ -13,7 +15,6 @@ module Network.TLS.Util
         ) where
 
 import Data.List (foldl')
--- import Network.TLS.Imports (ByteString)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
 
@@ -53,6 +54,12 @@ partition6 bytes (d1,d2,d3,d4,d5,d6) = if B.length bytes < s then Nothing else J
 fromJust :: String -> Maybe a -> a
 fromJust what Nothing  = error ("fromJust " ++ what ++ ": Nothing") -- yuck
 fromJust _    (Just x) = x
+
+mcase :: Maybe a -> b -> (a -> b) -> b
+mcase m b = flip (maybe b) m
+
+maybeToRight :: e -> Maybe a -> Either e a
+maybeToRight e = maybe (Left e) Right
 
 -- | This is a strict version of and
 and' :: [Bool] -> Bool

@@ -25,13 +25,15 @@ import Network.TLS.State (withRNG, getVersion)
 import Network.TLS.Crypto
 import Network.TLS.Types
 import Network.TLS.Context.Internal
+import Network.TLS.ErrT
+import Network.TLS.Struct
 
 {- if the RSA encryption fails we just return an empty bytestring, and let the protocol
  - fail by itself; however it would be probably better to just report it since it's an internal problem.
  -}
 encryptRSA :: Context -> ByteString -> IO ByteString
 encryptRSA ctx content = do
-    publicKey <- usingHState ctx getRemotePublicKey
+    publicKey <- usingHState_ ctx getRemotePublicKey
     usingState_ ctx $ do
         v <- withRNG $ kxEncrypt publicKey content
         case v of
@@ -40,7 +42,7 @@ encryptRSA ctx content = do
 
 signPrivate :: Context -> Role -> SignatureParams -> ByteString -> IO ByteString
 signPrivate ctx _ params content = do
-    privateKey <- usingHState ctx getLocalPrivateKey
+    privateKey <- usingHState_ ctx getLocalPrivateKey
     usingState_ ctx $ do
         r <- withRNG $ kxSign privateKey params content
         case r of
@@ -49,15 +51,15 @@ signPrivate ctx _ params content = do
 
 decryptRSA :: Context -> ByteString -> IO (Either KxError ByteString)
 decryptRSA ctx econtent = do
-    privateKey <- usingHState ctx getLocalPrivateKey
+    privateKey <- usingHState_ ctx getLocalPrivateKey
     usingState_ ctx $ do
         ver <- getVersion
         let cipher = if ver < TLS10 then econtent else B.drop 2 econtent
         withRNG $ kxDecrypt privateKey cipher
 
-verifyPublic :: Context -> Role -> SignatureParams -> ByteString -> ByteString -> IO Bool
+verifyPublic :: Context -> Role -> SignatureParams -> ByteString -> ByteString -> ErrT TLSError IO Bool
 verifyPublic ctx _ params econtent sign = do
-    publicKey <- usingHState ctx getRemotePublicKey
+    publicKey <- usingHStateT ctx getRemotePublicKey
     return $ kxVerify publicKey params econtent sign
 
 generateDHE :: Context -> DHParams -> IO (DHPrivate, DHPublic)
