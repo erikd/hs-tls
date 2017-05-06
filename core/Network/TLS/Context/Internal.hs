@@ -79,7 +79,7 @@ import qualified Data.ByteString as B
 
 import Control.Concurrent.MVar
 import Control.Monad.State.Strict
-import Control.Exception (throwIO, Exception())
+import Control.Exception (Exception(), mask, onException, throwIO, )
 import Data.IORef
 import Data.Tuple
 
@@ -205,7 +205,7 @@ usingState_ ctx f =
 usingHState :: Context -> HandshakeM a -> IO (Either TLSError a)
 usingHState ctx f = liftIO $ modifyMVar (ctxHandshake ctx) $ \mst ->
     case mst of
-        Nothing -> return $ (Nothing, Left $ Error_Misc "missing handshake")
+        Nothing -> throwCore $ Error_Misc "missing handshake"
         Just st -> return $ swap (Just `fmap` runHandshake st f)
 
 usingHState_ :: Context -> HandshakeM a -> IO a
@@ -244,13 +244,13 @@ withReadLock :: Context -> IO a -> IO a
 withReadLock ctx f = withMVar (ctxLockRead ctx) (const f)
 
 withReadLockT :: Context -> ErrT TLSError IO a -> ErrT TLSError IO a
-withReadLockT ctx f = liftIO (takeMVar $ ctxLockRead ctx) >> f
+withReadLockT ctx f = withMVarT (ctxLockRead ctx) (const f)
 
 withWriteLock :: Context -> IO a -> IO a
 withWriteLock ctx f = withMVar (ctxLockWrite ctx) (const f)
 
 withWriteLockT :: Context -> ErrT TLSError IO a -> ErrT TLSError IO a
-withWriteLockT ctx f = liftIO (takeMVar $ ctxLockWrite ctx) >> f
+withWriteLockT ctx f = withMVarT (ctxLockWrite ctx) (const f)
 
 withRWLock :: Context -> IO a -> IO a
 withRWLock ctx f = withReadLock ctx $ withWriteLock ctx f
@@ -260,3 +260,7 @@ withRWLockT ctx f = withReadLockT ctx $ withWriteLockT ctx f
 
 withStateLock :: Context -> IO a -> IO a
 withStateLock ctx f = withMVar (ctxLockState ctx) (const f)
+
+-- | withMar lifted into `ErrT e IO`.
+withMVarT :: MVar a -> (a -> ErrT e IO b) -> ErrT e IO b
+withMVarT m f = newErrT $ withMVar m (runErrT . f)
