@@ -51,7 +51,7 @@ unexpected msg expected = left $ Error_Packet_unexpected msg (maybe "" (" expect
 
 newSession :: Context -> IO Session
 newSession ctx
-    | supportedSession $ ctxSupported ctx = getStateRNG ctx 32 >>= return . Session . Just
+    | supportedSession $ ctxSupported ctx = Session . either (const Nothing) Just <$> runErrT (getStateRNG ctx 32)
     | otherwise                           = return $ Session Nothing
 
 -- | when a new handshake is done, wrap up & clean up.

@@ -77,7 +77,7 @@ prepareRecord ctx f = do
                                     then bulkIVSize $ cipherBulk cipher
                                     else 0 -- to not generate IV
     if hasExplicitBlockIV ver && sz > 0
-        then do newIV <- liftIO $ getStateRNG ctx sz
+        then do newIV <- getStateRNG ctx sz
                 runTxStateT ctx (modify (setRecordIV newIV) >> f)
         else runTxStateT ctx f
 

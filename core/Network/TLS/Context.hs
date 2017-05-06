@@ -56,7 +56,6 @@ module Network.TLS.Context
 
     -- * Using context states
     , usingState
-    , usingState_
     , usingStateT
     , runTxState
     , runRxState

@@ -105,7 +105,7 @@ handshakeClient cparams ctx = do
 
         sendClientHello :: ErrT TLSError IO [ExtensionID]
         sendClientHello = do
-            crand <- liftIO $ getStateRNG ctx 32 >>= return . ClientRandom
+            crand <- ClientRandom <$> getStateRNG ctx 32
             let clientSession = Session . maybe Nothing (Just . fst) $ clientWantSessionResume cparams
                 highestVer = maximum $ supportedVersions $ ctxSupported ctx
             extensions <- catMaybes <$> getExtensions
@@ -181,7 +181,7 @@ sendClientData cparams ctx = sendCertificate >> sendClientKeyXchg >> sendCertifi
                     encryptedPreMaster <- do
                         -- SSL3 implementation generally forget this length field since it's redundant,
                         -- however TLS10 make it clear that the length field need to be present.
-                        e <- liftIO $ encryptRSA ctx premaster
+                        e <- encryptRSA ctx premaster
                         let extra = if xver < TLS10
                                         then B.empty
                                         else encodeWord16 $ fromIntegral $ B.length e
@@ -196,7 +196,7 @@ sendClientData cparams ctx = sendCertificate >> sendClientKeyXchg >> sendCertifi
           where getCKX_DHE = do
                     xver <- usingStateT ctx getVersion
                     serverParams <- usingHStateT ctx getServerDHParams
-                    (clientDHPriv, clientDHPub) <- liftIO $ generateDHE ctx (serverDHParamsToParams serverParams)
+                    (clientDHPriv, clientDHPub) <- generateDHE ctx (serverDHParamsToParams serverParams)
 
                     let premaster = dhGetShared (serverDHParamsToParams serverParams)
                                                 clientDHPriv
@@ -207,7 +207,7 @@ sendClientData cparams ctx = sendCertificate >> sendClientKeyXchg >> sendCertifi
 
                 getCKX_ECDHE = do
                     ServerECDHParams _grp srvpub <- usingHStateT ctx getServerECDHParams
-                    (clipub, premaster) <- liftIO $ generateECDHEShared ctx srvpub
+                    (clipub, premaster) <- generateECDHEShared ctx srvpub
                     xver <- usingStateT ctx getVersion
                     usingHStateT ctx $ setMasterSecretFromPre xver ClientRole premaster
                     return $ CKX_ECDH $ encodeGroupPublic clipub

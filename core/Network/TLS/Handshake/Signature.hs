@@ -131,7 +131,7 @@ signatureCreateWithCertVerifyData :: Context
                                   -> ErrT TLSError IO DigitallySigned
 signatureCreateWithCertVerifyData ctx malg (sigParam, toSign) = do
     cc <- usingStateT ctx $ isClientContext
-    DigitallySigned malg <$> liftIO (signPrivate ctx cc sigParam toSign)
+    DigitallySigned malg <$> signPrivate ctx cc sigParam toSign
 
 signatureVerify :: Context -> DigitallySigned -> DigitalSignatureAlg -> ByteString -> ErrT TLSError IO Bool
 signatureVerify ctx digSig@(DigitallySigned hashSigAlg _) sigAlgExpected toVerifyData = do

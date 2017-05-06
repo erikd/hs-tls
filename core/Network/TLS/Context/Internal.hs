@@ -47,9 +47,7 @@ module Network.TLS.Context.Internal
     , contextGetInformation
 
     -- * Using context states
-    , throwCore
     , usingState
-    , usingState_
     , usingStateT
     , runTxState
     , runTxStateT
@@ -138,20 +136,24 @@ contextClose = backendClose . ctxConnection
 -- | Information about the current context
 contextGetInformation :: Context -> IO (Maybe Information)
 contextGetInformation ctx = do
-    ver    <- usingState_ ctx $ gets stVersion
-    hstate <- getHState ctx
-    let (ms, cr, sr) = case hstate of
-                           Just st -> (hstMasterSecret st,
-                                       Just (hstClientRandom st),
-                                       hstServerRandom st)
-                           Nothing -> (Nothing, Nothing, Nothing)
-    res <- runRxState ctx $ gets $ \st -> (stCipher st, stCompression st)
-    case res of
-        Left _ -> return Nothing
-        Right (cipher,comp) ->
-            case (ver, cipher) of
-                (Just v, Just c) -> return $ Just $ Information v c comp ms cr sr
-                _                -> return Nothing
+    -- TODO : Clean this up Erik
+    ever    <- usingState ctx $ gets stVersion
+    case ever of
+        Left _ -> pure Nothing
+        Right ver -> do
+            hstate <- getHState ctx
+            let (ms, cr, sr) = case hstate of
+                                Just st -> (hstMasterSecret st,
+                                            Just (hstClientRandom st),
+                                            hstServerRandom st)
+                                Nothing -> (Nothing, Nothing, Nothing)
+            res <- runRxState ctx $ gets $ \st -> (stCipher st, stCompression st)
+            case res of
+                Left _ -> return Nothing
+                Right (cipher,comp) ->
+                    case (ver, cipher) of
+                        (Just v, Just c) -> return $ Just $ Information v c comp ms cr sr
+                        _                -> return Nothing
 
 contextSend :: Context -> ByteString -> IO ()
 contextSend c b = updateMeasure c (addBytesSent $ B.length b) >> (backendSend $ ctxConnection c) b
@@ -195,10 +197,6 @@ usingState ctx f =
 usingStateT :: Context -> TLSSt a -> ErrT TLSError IO a
 usingStateT ctx = newErrT . usingState ctx
 
-usingState_ :: Context -> TLSSt a -> IO a
-usingState_ ctx f =
-    either throwCore return =<< usingState ctx f
-
 usingHState :: Context -> HandshakeM a -> IO (Either TLSError a)
 usingHState ctx f = liftIO $ modifyMVar (ctxHandshake ctx) $ \mst ->
     case mst of
@@ -217,25 +215,32 @@ getHState ctx = liftIO $ readMVar (ctxHandshake ctx)
 
 runTxState :: Context -> RecordM a -> IO (Either TLSError a)
 runTxState ctx f = do
-    ver <- usingState_ ctx (getVersionWithDefault $ maximum $ supportedVersions $ ctxSupported ctx)
-    modifyMVar (ctxTxState ctx) $ \st ->
-        case runRecordM f ver st of
-            Left err         -> return (st, Left err)
-            Right (a, newSt) -> return (newSt, Right a)
+    ever <- usingState ctx (getVersionWithDefault $ maximum $ supportedVersions $ ctxSupported ctx)
+    case ever of
+        Left err -> return $ Left err
+        Right ver ->
+            modifyMVar (ctxTxState ctx) $ \st ->
+                case runRecordM f ver st of
+                    Left err         -> return (st, Left err)
+                    Right (a, newSt) -> return (newSt, Right a)
+
 
 runTxStateT :: Context -> RecordM a -> ErrT TLSError IO a
 runTxStateT ctx = newErrT . runTxState ctx
 
 runRxState :: Context -> RecordM a -> IO (Either TLSError a)
 runRxState ctx f = do
-    ver <- usingState_ ctx getVersion
-    modifyMVar (ctxRxState ctx) $ \st ->
-        case runRecordM f ver st of
-            Left err         -> return (st, Left err)
-            Right (a, newSt) -> return (newSt, Right a)
+    ever <- usingState ctx getVersion
+    case ever of
+        Left err -> return $ Left err
+        Right ver ->
+            modifyMVar (ctxRxState ctx) $ \st ->
+                case runRecordM f ver st of
+                    Left err         -> return (st, Left err)
+                    Right (a, newSt) -> return (newSt, Right a)
 
-getStateRNG :: Context -> Int -> IO ByteString
-getStateRNG ctx n = usingState_ ctx $ genRandom n
+getStateRNG :: Context -> Int -> ErrT TLSError IO ByteString
+getStateRNG ctx n = usingStateT ctx $ genRandom n
 
 withReadLock :: Context -> IO a -> IO a
 withReadLock ctx f = withMVar (ctxLockRead ctx) (const f)
@@ -258,6 +263,15 @@ withRWLockT ctx f = withReadLockT ctx $ withWriteLockT ctx f
 withStateLock :: Context -> IO a -> IO a
 withStateLock ctx f = withMVar (ctxLockState ctx) (const f)
 
--- | withMar lifted into `ErrT e IO`.
+-- | withMVarT : withMar lifted into `ErrT e IO`.
 withMVarT :: MVar a -> (a -> ErrT e IO b) -> ErrT e IO b
 withMVarT m f = newErrT $ withMVar m (runErrT . f)
+
+-- | modifyMVarT : modifyMVar lifted into `ErrT e IO`.
+modifyMVarT :: MVar a -> (a -> ErrT e IO (a, b)) -> ErrT e IO b
+modifyMVarT m f =
+    newErrT . modifyMVar m $ \ st -> do
+        res <- runErrT $ f st
+        case res of
+            Left e -> pure (st, Left e)
+            Right (newSt, b) -> pure (newSt, Right b)

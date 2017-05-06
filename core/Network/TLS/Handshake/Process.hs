@@ -79,7 +79,7 @@ processClientKeyXchg :: Context -> ClientKeyXchgAlgorithmData -> ErrT TLSError I
 processClientKeyXchg ctx (CKX_RSA encryptedPremaster) = do
     (rver, role, random) <- usingStateT ctx $ do
         (,,) <$> getVersion <*> isClientContext <*> genRandom 48
-    ePremaster <- liftIO $ decryptRSA ctx encryptedPremaster
+    ePremaster <- decryptRSA ctx encryptedPremaster
     usingHStateT ctx $ do
         expectedVer <- gets hstClientVersion
         case ePremaster of

@@ -271,7 +271,7 @@ doHandshake sparams mcred ctx chosenVersion usedCipher usedCompression clientSes
         ---
         makeServerHello :: Session -> ErrT TLSError IO Handshake
         makeServerHello session = do
-            srand <- ServerRandom <$> liftIO (getStateRNG ctx 32)
+            srand <- ServerRandom <$> getStateRNG ctx 32
             case mcred of
                 Just (_, privkey) -> usingHStateT ctx $ setPrivateKey privkey
                 _                 -> return () -- return a sensible error
@@ -353,7 +353,7 @@ doHandshake sparams mcred ctx chosenVersion usedCipher usedCompression clientSes
         setup_DHE :: ErrT TLSError IO ServerDHParams
         setup_DHE = do
             let dhparams = fromJust "server DHE Params" $ serverDHEParams sparams
-            (priv, pub) <- liftIO $ generateDHE ctx dhparams
+            (priv, pub) <- generateDHE ctx dhparams
 
             let serverParams = serverDHParamsFrom dhparams pub
 
@@ -389,7 +389,7 @@ doHandshake sparams mcred ctx chosenVersion usedCipher usedCompression clientSes
         generateSKX_DH_Anon = SKX_DH_Anon <$> setup_DHE
 
         setup_ECDHE grp = do
-            (srvpri, srvpub) <- liftIO $ generateECDHE ctx grp
+            (srvpri, srvpub) <- generateECDHE ctx grp
             let serverParams = ServerECDHParams grp srvpub
             usingHStateT ctx $ setServerECDHParams serverParams
             usingHStateT ctx $ setECDHPrivate srvpri
