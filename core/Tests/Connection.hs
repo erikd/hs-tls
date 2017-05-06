@@ -230,27 +230,25 @@ establishDataPipe params tlsServer tlsClient = do
                            ", supported: " ++ show supported
             E.throw e
 
-initiateDataPipe :: (ClientParams, ServerParams) -> (Context -> IO a1) -> (Context -> IO a) -> IO (Either E.SomeException a, Either E.SomeException a1)
+initiateDataPipe :: (ClientParams, ServerParams) -> (Context -> IO (Either e a)) -> (Context -> IO (Either e a)) -> IO (Either e a, Either e a)
 initiateDataPipe params tlsServer tlsClient = do
     -- initial setup
     pipe        <- newPipe
-    _           <- (runPipe pipe)
+    _           <- runPipe pipe
     cQueue      <- newChan
     sQueue      <- newChan
 
     (cCtx, sCtx) <- newPairContext pipe params
 
-    _ <- forkIO $ E.catch (tlsServer sCtx >>= writeSuccess sQueue)
-                          (writeException sQueue)
-    _ <- forkIO $ E.catch (tlsClient cCtx >>= writeSuccess cQueue)
-                          (writeException cQueue)
+    _ <- forkIO $ tlsServer sCtx >>= either (writeFailure sQueue) (writeSuccess sQueue)
+    _ <- forkIO $ tlsClient cCtx >>= either (writeFailure cQueue) (writeSuccess cQueue)
 
     sRes <- readChan sQueue
     cRes <- readChan cQueue
     return (cRes, sRes)
   where
-        writeException :: Chan (Either E.SomeException a) -> E.SomeException -> IO ()
-        writeException queue e = writeChan queue (Left e)
+        writeFailure :: Chan (Either e a) -> e -> IO ()
+        writeFailure queue e = writeChan queue (Left e)
 
-        writeSuccess :: Chan (Either E.SomeException a) -> a -> IO ()
+        writeSuccess :: Chan (Either e a) -> a -> IO ()
         writeSuccess queue res = writeChan queue (Right res)

@@ -10,7 +10,7 @@ import Connection
 import Marshalling
 import Ciphers
 
-import Data.Maybe
+import Data.Maybe (fromJust, isJust)
 import Data.List (intersect)
 
 import qualified Data.ByteString as B
@@ -47,9 +47,9 @@ prop_pipe_work = do
 
 recvDataNonNull :: Context -> IO C8.ByteString
 recvDataNonNull ctx =
-    recvData ctx >>=
-        either (const $ recvDataNonNull ctx)
-        (\l -> if B.null l then recvDataNonNull ctx else return l)
+    recvData ctx >>= either
+            (\e -> error $ "recvDataNonNull: " ++ show e)
+            (\l -> if B.null l then recvDataNonNull ctx else return l)
 
 runTLSPipe :: (ClientParams, ServerParams) -> (Context -> Chan C8.ByteString -> IO ()) -> (Chan C8.ByteString -> Context -> IO ()) -> PropertyM IO ()
 runTLSPipe params tlsServer tlsClient = do
@@ -66,14 +66,14 @@ runTLSPipe params tlsServer tlsClient = do
 runTLSPipeSimple :: (ClientParams, ServerParams) -> PropertyM IO ()
 runTLSPipeSimple params = runTLSPipe params tlsServer tlsClient
   where tlsServer ctx queue = do
-            handshake ctx
+            errorLeft <$> handshake ctx
             d <- recvDataNonNull ctx
             writeChan queue d
             return ()
         tlsClient queue ctx = do
-            handshake ctx
+            errorLeft <$> handshake ctx
             d <- readChan queue
-            sendData ctx (L.fromChunks [d])
+            errorLeft <$> sendData ctx (L.fromChunks [d])
             bye ctx
             return ()
 
@@ -82,8 +82,18 @@ runTLSInitFailure params = do
     (cRes, sRes) <- run (initiateDataPipe params tlsServer tlsClient)
     assertIsLeft cRes
     assertIsLeft sRes
-  where tlsServer ctx = handshake ctx >> bye ctx >> return ("server success" :: String)
-        tlsClient ctx = handshake ctx >> bye ctx >> return ("client success" :: String)
+  where tlsServer ctx = do
+            r <- handshake ctx
+            bye ctx
+            case r of
+                Left e -> pure $ Left e
+                Right () -> pure $ Right ("server success" :: String)
+        tlsClient ctx = do
+            r <- handshake ctx
+            bye ctx
+            case r of
+                Left e -> pure $ Left e
+                Right () -> pure $ Right ("client success" :: String)
 
 prop_handshake_initiate :: PropertyM IO ()
 prop_handshake_initiate = do
@@ -180,18 +190,18 @@ prop_handshake_alpn = do
         params' = (clientParam',serverParam')
     runTLSPipe params' tlsServer tlsClient
   where tlsServer ctx queue = do
-            handshake ctx
+            errorLeft <$> handshake ctx
             proto <- getNegotiatedProtocol ctx
             Just "h2" `assertEq` proto
             d <- recvDataNonNull ctx
             writeChan queue d
             return ()
         tlsClient queue ctx = do
-            handshake ctx
+            errorLeft <$> handshake ctx
             proto <- getNegotiatedProtocol ctx
             Just "h2" `assertEq` proto
             d <- readChan queue
-            sendData ctx (L.fromChunks [d])
+            errorLeft <$> sendData ctx (L.fromChunks [d])
             bye ctx
             return ()
         alpn xs
@@ -207,16 +217,16 @@ prop_handshake_sni = do
         params' = (clientParam',serverParam)
     runTLSPipe params' tlsServer tlsClient
   where tlsServer ctx queue = do
-            handshake ctx
+            errorLeft <$> handshake ctx
             sni <- getClientSNI ctx
             Just serverName `assertEq` sni
             d <- recvDataNonNull ctx
             writeChan queue d
             return ()
         tlsClient queue ctx = do
-            handshake ctx
+            errorLeft <$> handshake ctx
             d <- readChan queue
-            sendData ctx (L.fromChunks [d])
+            errorLeft <$> sendData ctx (L.fromChunks [d])
             bye ctx
             return ()
         serverName = "haskell.org"
@@ -231,15 +241,15 @@ prop_handshake_renegotiation = do
           }
     runTLSPipe (cparams, sparams') tlsServer tlsClient
   where tlsServer ctx queue = do
-            handshake ctx
+            errorLeft <$> handshake ctx
             d <- recvDataNonNull ctx
             writeChan queue d
             return ()
         tlsClient queue ctx = do
-            handshake ctx
-            handshake ctx
+            errorLeft <$> handshake ctx
+            errorLeft <$> handshake ctx
             d <- readChan queue
-            sendData ctx (L.fromChunks [d])
+            errorLeft <$> sendData ctx (L.fromChunks [d])
             bye ctx
             return ()
 
@@ -266,6 +276,9 @@ assertEq expected got = unless (expected == got) $ error ("got " ++ show got ++ 
 assertIsLeft :: (Show b, Monad m) => Either a b -> m ()
 assertIsLeft (Left  _) = return()
 assertIsLeft (Right b) = error ("got " ++ show b ++ " but was expecting a failure")
+
+errorLeft :: Either TLSError a -> a
+errorLeft = either (error . show) id
 
 main :: IO ()
 main = defaultMain $ testGroup "tls"
