@@ -28,6 +28,6 @@ import Control.Exception (fromException)
 
 -- | Handshake for a new TLS connection
 -- This is to be called at the beginning of a connection, and during renegotiation
-handshake :: Context -> ErrT TLSError IO ()
+handshake :: Context -> IO (Either TLSError ())
 handshake ctx =
-    withRWLockT ctx (ctxDoHandshake ctx $ ctx)
+    runErrT $ withRWLockT ctx (ctxDoHandshake ctx $ ctx)

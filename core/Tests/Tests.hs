@@ -46,7 +46,10 @@ prop_pipe_work = do
     return ()
 
 recvDataNonNull :: Context -> IO C8.ByteString
-recvDataNonNull ctx = recvData ctx >>= \l -> if B.null l then recvDataNonNull ctx else return l
+recvDataNonNull ctx =
+    recvData ctx >>=
+        either (const $ recvDataNonNull ctx)
+        (\l -> if B.null l then recvDataNonNull ctx else return l)
 
 runTLSPipe :: (ClientParams, ServerParams) -> (Context -> Chan C8.ByteString -> IO ()) -> (Chan C8.ByteString -> Context -> IO ()) -> PropertyM IO ()
 runTLSPipe params tlsServer tlsClient = do

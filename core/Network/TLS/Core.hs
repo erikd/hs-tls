@@ -56,8 +56,9 @@ bye ctx = void . sendPacket ctx $ Alert [(AlertLevel_Warning, CloseNotify)]
 
 -- | If the ALPN extensions have been used, this will
 -- return get the protocol agreed upon.
-getNegotiatedProtocol :: MonadIO m => Context -> m (Either TLSError (Maybe B.ByteString))
-getNegotiatedProtocol ctx = liftIO . runErrT $ usingStateT ctx S.getNegotiatedProtocol
+getNegotiatedProtocol :: MonadIO m => Context -> m (Maybe B.ByteString)
+getNegotiatedProtocol ctx =
+    either (const $ pure Nothing) pure =<< liftIO (runErrT $ usingStateT ctx S.getNegotiatedProtocol)
 
 type HostName = String
 

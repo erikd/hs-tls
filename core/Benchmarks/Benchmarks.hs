@@ -35,7 +35,10 @@ blockCipher = Cipher
     }
 
 recvDataNonNull :: Context -> IO B.ByteString
-recvDataNonNull ctx = recvData ctx >>= \l -> if B.null l then recvDataNonNull ctx else return l
+recvDataNonNull ctx =
+    recvData ctx >>=
+        either (const $ recvDataNonNull ctx)
+        (\l -> if B.null l then recvDataNonNull ctx else return l)
 
 getParams :: Version -> Cipher -> (ClientParams, ServerParams)
 getParams connectVer cipher = (cParams, sParams)
