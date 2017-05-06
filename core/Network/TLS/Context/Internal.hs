@@ -186,9 +186,6 @@ setEstablished ctx v = writeIORef (ctxEstablished_ ctx) v
 withLog :: Context -> (Logging -> IO ()) -> IO ()
 withLog ctx f = ctxWithHooks ctx (f . hookLogging)
 
-throwCore :: (MonadIO m, Exception e) => e -> m a
-throwCore = liftIO . throwIO
-
 usingState :: Context -> TLSSt a -> IO (Either TLSError a)
 usingState ctx f =
     modifyMVar (ctxState ctx) $ \st ->
@@ -205,7 +202,7 @@ usingState_ ctx f =
 usingHState :: Context -> HandshakeM a -> IO (Either TLSError a)
 usingHState ctx f = liftIO $ modifyMVar (ctxHandshake ctx) $ \mst ->
     case mst of
-        Nothing -> throwCore $ Error_Misc "missing handshake"
+        Nothing -> return (Nothing, Left $ Error_Misc "missing handshake")
         Just st -> return $ swap (Just `fmap` runHandshake st f)
 
 usingHState_ :: Context -> HandshakeM a -> IO a

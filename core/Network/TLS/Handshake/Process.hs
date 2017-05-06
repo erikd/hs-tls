@@ -44,7 +44,7 @@ processHandshake ctx hs = do
             when (secureRenegotiation && (0xff `elem` cids)) $
                 usingStateT ctx $ setSecureRenegotiation True
             liftIO $ startHandshake ctx cver ran
-        Certificates certs            -> liftIO $ processCertificates role certs
+        Certificates certs            -> processCertificates role certs
         ClientKeyXchg content         -> when (role == ServerRole) $ do
             processClientKeyXchg ctx content
         Finished fdata                -> processClientFinished ctx fdata
@@ -64,12 +64,12 @@ processHandshake ctx hs = do
         -- unknown extensions
         processClientExtension _ = return ()
 
-        processCertificates :: Role -> CertificateChain -> IO ()
+        processCertificates :: Role -> CertificateChain -> ErrT TLSError IO ()
         processCertificates ServerRole (CertificateChain []) = return ()
         processCertificates ClientRole (CertificateChain []) =
-            throwCore $ Error_Protocol ("server certificate missing", True, HandshakeFailure)
+            left $ Error_Protocol ("server certificate missing", True, HandshakeFailure)
         processCertificates _ (CertificateChain (c:_)) =
-            usingHState_ ctx $ setPublicKey pubkey
+            usingHStateT ctx $ setPublicKey pubkey
           where pubkey = certPubKey $ getCertificate c
 
 -- process the client key exchange message. the protocol expects the initial
@@ -109,7 +109,7 @@ processClientKeyXchg ctx (CKX_ECDH bytes) = do
                   rver <- usingStateT ctx getVersion
                   role <- usingStateT ctx isClientContext
                   usingHStateT ctx $ setMasterSecretFromPre rver role premaster
-              Nothing -> throwCore $ Error_Protocol ("cannote generate a shared secret on ECDH", True, HandshakeFailure)
+              Nothing -> left $ Error_Protocol ("cannote generate a shared secret on ECDH", True, HandshakeFailure)
 
 processClientFinished :: Context -> FinishedData -> ErrT TLSError IO ()
 processClientFinished ctx fdata = do

@@ -88,7 +88,7 @@ prepareCertificateVerifySignatureData ctx usedVersion sigAlg hashSigAlg msgs
             case sigAlg of
                 RSA -> return (hashInit SHA1_MD5, RSAParams SHA1_MD5 RSApkcs1, generateCertificateVerify_SSL)
                 DSS -> return (hashInit SHA1, DSSParams, generateCertificateVerify_SSL_DSS)
-                _   -> throwCore $ Error_Misc ("unsupported CertificateVerify signature for SSL3: " ++ show sigAlg)
+                _   -> left $ Error_Misc ("unsupported CertificateVerify signature for SSL3: " ++ show sigAlg)
         Just masterSecret <- usingHStateT ctx $ gets hstMasterSecret
         return (params, generateCV_SSL masterSecret $ hashUpdate hashCtx msgs)
     | usedVersion == TLS10 || usedVersion == TLS11 =

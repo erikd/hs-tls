@@ -55,7 +55,6 @@ module Network.TLS.Context
     , contextHookSetLogging
 
     -- * Using context states
-    , throwCore
     , usingState
     , usingState_
     , usingStateT

@@ -164,7 +164,7 @@ sendClientData cparams ctx = sendCertificate >> sendClientKeyXchg >> sendCertifi
                             case certPubKey $ getCertificate c of
                                 PubKeyRSA _ -> return ()
                                 PubKeyDSA _ -> return ()
-                                _           -> throwCore $ Error_Protocol ("no supported certificate type", True, HandshakeFailure)
+                                _           -> left $ Error_Protocol ("no supported certificate type", True, HandshakeFailure)
                             usingHStateT ctx $ setPrivateKey pk
                             usingHStateT ctx $ setClientCertSent True
                             newErrT $ sendPacket ctx $ Handshake [Certificates cc]
@@ -191,7 +191,7 @@ sendClientData cparams ctx = sendCertificate >> sendClientKeyXchg >> sendCertifi
                 CipherKeyExchange_DHE_DSS -> getCKX_DHE
                 CipherKeyExchange_ECDHE_RSA -> getCKX_ECDHE
                 CipherKeyExchange_ECDHE_ECDSA -> getCKX_ECDHE
-                _ -> throwCore $ Error_Protocol ("client key exchange unsupported type", True, HandshakeFailure)
+                _ -> left $ Error_Protocol ("client key exchange unsupported type", True, HandshakeFailure)
             sendPacket ctx $ Handshake [ClientKeyXchg ckx]
           where getCKX_DHE = do
                     xver <- usingStateT ctx getVersion
@@ -286,22 +286,22 @@ miscErrorOnException msg e =
 --
 onServerHello :: Context -> ClientParams -> [ExtensionID] -> Handshake -> ErrT TLSError IO (RecvState (ErrT TLSError IO))
 onServerHello ctx cparams sentExts (ServerHello rver serverRan serverSession cipher compression exts) = do
-    when (rver == SSL2) $ throwCore $ Error_Protocol ("ssl2 is not supported", True, ProtocolVersion)
+    when (rver == SSL2) $ left $ Error_Protocol ("ssl2 is not supported", True, ProtocolVersion)
     case find ((==) rver) (supportedVersions $ ctxSupported ctx) of
-        Nothing -> throwCore $ Error_Protocol ("server version " ++ show rver ++ " is not supported", True, ProtocolVersion)
+        Nothing -> left $ Error_Protocol ("server version " ++ show rver ++ " is not supported", True, ProtocolVersion)
         Just _  -> return ()
     -- find the compression and cipher methods that the server want to use.
     cipherAlg <- case find ((==) cipher . cipherID) (ctxCiphers ctx mempty) of
-                     Nothing  -> throwCore $ Error_Protocol ("server choose unknown cipher", True, HandshakeFailure)
+                     Nothing  -> left $ Error_Protocol ("server choose unknown cipher", True, HandshakeFailure)
                      Just alg -> return alg
     compressAlg <- case find ((==) compression . compressionID) (supportedCompressions $ ctxSupported ctx) of
-                       Nothing  -> throwCore $ Error_Protocol ("server choose unknown compression", True, HandshakeFailure)
+                       Nothing  -> left $ Error_Protocol ("server choose unknown compression", True, HandshakeFailure)
                        Just alg -> return alg
 
     -- intersect sent extensions in client and the received extensions from server.
     -- if server returns extensions that we didn't request, fail.
     when (not $ null $ filter (not . flip elem sentExts . (\(ExtensionRaw i _) -> i)) exts) $
-        throwCore $ Error_Protocol ("spurious extensions received", True, UnsupportedExtension)
+        left $ Error_Protocol ("spurious extensions received", True, UnsupportedExtension)
 
     let resumingSession =
             case clientWantSessionResume cparams of
@@ -373,20 +373,20 @@ processServerKeyExchange ctx (ServerKeyXchg origSkx) = do
                 (cke, SKX_Unparsed bytes) -> do
                     ver <- usingStateT ctx getVersion
                     case decodeReallyServerKeyXchgAlgorithmData ver cke bytes of
-                        Left _        -> throwCore $ Error_Protocol ("unknown server key exchange received, expecting: " ++ show cke, True, HandshakeFailure)
+                        Left _        -> left $ Error_Protocol ("unknown server key exchange received, expecting: " ++ show cke, True, HandshakeFailure)
                         Right realSkx -> processWithCipher cipher realSkx
                     -- we need to resolve the result. and recall processWithCipher ..
-                (c,_)           -> throwCore $ Error_Protocol ("unknown server key exchange received, expecting: " ++ show c, True, HandshakeFailure)
+                (c,_)           -> left $ Error_Protocol ("unknown server key exchange received, expecting: " ++ show c, True, HandshakeFailure)
         doDHESignature dhparams signature signatureType = do
             -- TODO verify DHParams
             verified <- digitallySignDHParamsVerify ctx dhparams signatureType signature
-            when (not verified) $ throwCore $ Error_Protocol ("bad " ++ show signatureType ++ " signature for dhparams " ++ show dhparams, True, HandshakeFailure)
+            when (not verified) $ left $ Error_Protocol ("bad " ++ show signatureType ++ " signature for dhparams " ++ show dhparams, True, HandshakeFailure)
             usingHStateT ctx $ setServerDHParams dhparams
 
         doECDHESignature ecdhparams signature signatureType = do
             -- TODO verify DHParams
             verified <- digitallySignECDHParamsVerify ctx ecdhparams signatureType signature
-            when (not verified) $ throwCore $ Error_Protocol ("bad " ++ show signatureType ++ " signature for ecdhparams", True, HandshakeFailure)
+            when (not verified) $ left $ Error_Protocol ("bad " ++ show signatureType ++ " signature for ecdhparams", True, HandshakeFailure)
             usingHStateT ctx $ setServerECDHParams ecdhparams
 
 processServerKeyExchange ctx p = processCertificateRequest ctx p
