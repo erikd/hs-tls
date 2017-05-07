@@ -57,8 +57,9 @@ handshakeTerminate ctx = do
     -- only callback the session established if we have a session
     case session of
         Session (Just sessionId) -> do
-            sessionData <- getSessionData ctx
-            liftIO $ sessionEstablish (sharedSessionManager $ ctxShared ctx) sessionId (fromJust "session-data" sessionData)
+            msessionData <- getSessionData ctx
+            sessionData <- hoistMaybe (Error_Misc "session-data") msessionData
+            liftIO $ sessionEstablish (sharedSessionManager $ ctxShared ctx) sessionId sessionData
         _ -> return ()
     -- forget most handshake data and reset bytes counters.
     liftIO $ modifyMVar_ (ctxHandshake ctx) $ \ mhshake ->
@@ -125,11 +126,12 @@ getSessionData ctx = do
     sni <- usingStateT ctx getClientSNI
     mms <- usingHStateT ctx (gets hstMasterSecret)
     tx  <- liftIO $ readMVar (ctxTxState ctx)
+    sc <- hoistMaybe (Error_Misc "cipher: Nothing") $ stCipher tx
     case mms of
         Nothing -> return Nothing
         Just ms -> return $ Just $ SessionData
                         { sessionVersion     = ver
-                        , sessionCipher      = cipherID $ fromJust "cipher" $ stCipher tx
+                        , sessionCipher      = cipherID sc
                         , sessionCompression = compressionID $ stCompression tx
                         , sessionClientSNI   = sni
                         , sessionSecret      = ms

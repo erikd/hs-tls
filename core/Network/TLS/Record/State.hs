@@ -138,7 +138,11 @@ makeDigest hdr content = do
     return digest
 
 getBulk :: RecordM Bulk
-getBulk = cipherBulk . fromJust "cipher" . stCipher <$> get
+getBulk = do
+    mb <- fmap cipherBulk . stCipher <$> get
+    case mb of
+        Nothing -> throwError $ Error_Misc "cipher: Nothing"
+        Just b -> pure b
 
 getMacSequence :: RecordM Word64
 getMacSequence = msSequence . stMacState <$> get

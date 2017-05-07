@@ -71,5 +71,6 @@ processPacket _ (Record ProtocolType_DeprecatedHandshake _ fragment) =
 
 switchRxEncryption :: Context -> ErrT TLSError IO ()
 switchRxEncryption ctx =
-    usingHStateT ctx (gets hstPendingRxState) >>= \rx ->
-    liftIO $ modifyMVar_ (ctxRxState ctx) (\_ -> return $ fromJust "rx-state" rx)
+    usingHStateT ctx (gets hstPendingRxState) >>= \ mrx ->
+        mcase mrx (left $ Error_Misc "rx-state: Nothing") $ \ rx ->
+            liftIO $ modifyMVar_ (ctxRxState ctx) (const $ pure rx)

@@ -83,12 +83,13 @@ prepareRecord ctx f = do
 
 switchTxEncryption :: Context -> ErrT TLSError IO ()
 switchTxEncryption ctx = do
-    tx  <- usingHStateT ctx (fromJust "tx-state" <$> gets hstPendingTxState)
-    (ver, cc) <- usingStateT ctx $ do
+    usingHStateT ctx (gets hstPendingTxState) >>= \ mtx ->
+        mcase mtx (left $ Error_Misc "tx-state: Nothing") $ \ tx -> do
+            (ver, cc) <- usingStateT ctx $ do
                                     v <- getVersion
                                     c <- isClientContext
                                     return (v, c)
-    liftIO $ modifyMVar_ (ctxTxState ctx) (\_ -> return tx)
-    -- set empty packet counter measure if condition are met
-    when (ver <= TLS10 && cc == ClientRole && isCBC tx && supportedEmptyPacket (ctxSupported ctx)) $ liftIO $ writeIORef (ctxNeedEmptyPacket ctx) True
+            liftIO $ modifyMVar_ (ctxTxState ctx) (\_ -> return tx)
+            -- set empty packet counter measure if condition are met
+            when (ver <= TLS10 && cc == ClientRole && isCBC tx && supportedEmptyPacket (ctxSupported ctx)) $ liftIO $ writeIORef (ctxNeedEmptyPacket ctx) True
   where isCBC tx = maybe False (\c -> bulkBlockSize (cipherBulk c) > 0) (stCipher tx)

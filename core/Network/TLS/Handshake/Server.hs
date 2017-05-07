@@ -22,7 +22,7 @@ import Network.TLS.Compression
 import Network.TLS.Credentials
 import Network.TLS.Crypto
 import Network.TLS.Extension
-import Network.TLS.Util (catchException, fromJust)
+import Network.TLS.Util (catchException)
 import Network.TLS.IO
 import Network.TLS.Types
 import Network.TLS.State hiding (getNegotiatedProtocol)
@@ -352,7 +352,7 @@ doHandshake sparams mcred ctx chosenVersion usedCipher usedCompression clientSes
 
         setup_DHE :: ErrT TLSError IO ServerDHParams
         setup_DHE = do
-            let dhparams = fromJust "server DHE Params" $ serverDHEParams sparams
+            dhparams <- hoistMaybe (Error_Misc "server DHE Params") $ serverDHEParams sparams
             (priv, pub) <- generateDHE ctx dhparams
 
             let serverParams = serverDHParamsFrom dhparams pub

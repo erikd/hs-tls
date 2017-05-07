@@ -12,6 +12,7 @@ module Network.TLS.ErrT
     , Error(..)
     , MonadError(..)
     , hoistEither
+    , hoistMaybe
     , left
     , newErrT
     , runErrT
@@ -40,6 +41,10 @@ type ErrT = ErrorT
 {-# INLINE hoistEither #-}
 hoistEither :: Monad m => Either e a -> ErrT e m a
 hoistEither = ExceptT . return
+
+{-# INLINE hoistMaybe #-}
+hoistMaybe :: Monad m => e -> Maybe a -> ErrT e m a
+hoistMaybe err = ExceptT . return . maybe (Left err) Right
 
 {-# INLINE left #-}
 left :: Monad m => e -> ErrT e m a

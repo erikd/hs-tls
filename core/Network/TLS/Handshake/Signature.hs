@@ -196,6 +196,6 @@ digitallySignECDHParamsVerify ctx dhparams sigAlg signature = do
 
 withClientAndServerRandom :: Context -> (ClientRandom -> ServerRandom -> b) -> ErrT TLSError IO b
 withClientAndServerRandom ctx f = do
-    (cran, sran) <- usingHStateT ctx $ (,) <$> gets hstClientRandom
-                                          <*> (fromJust "withClientAndServer : server random" <$> gets hstServerRandom)
+    (cran, msran) <- usingHStateT ctx $ (,) <$> gets hstClientRandom <*> gets hstServerRandom
+    sran <- hoistMaybe (Error_Misc "withClientAndServer : server random : Nothing") msran
     return $ f cran sran

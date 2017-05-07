@@ -58,7 +58,7 @@ import Network.TLS.Cipher
 import Network.TLS.Compression
 import Network.TLS.Types
 import Network.TLS.ErrT
-import Control.Applicative (Applicative, (<$>))
+import Control.Applicative (Applicative)
 import Control.Monad.State.Strict
 import Data.X509 (CertificateChain)
 import Data.ByteArray (ByteArrayAccess)
@@ -143,16 +143,16 @@ setPrivateKey pk = modify (\hst -> hst { hstKeyState = setPK (hstKeyState hst) }
   where setPK hks = hks { hksLocalPrivateKey = Just pk }
 
 getRemotePublicKey :: HandshakeM PubKey
-getRemotePublicKey = fromJust "remote public key" <$> gets (hksRemotePublicKey . hstKeyState)
+getRemotePublicKey = handleJust "remote public key" =<< gets (hksRemotePublicKey . hstKeyState)
 
 getLocalPrivateKey :: HandshakeM PrivKey
-getLocalPrivateKey = fromJust "local private key" <$> gets (hksLocalPrivateKey . hstKeyState)
+getLocalPrivateKey = handleJust "local private key" =<< gets (hksLocalPrivateKey . hstKeyState)
 
 getServerDHParams :: HandshakeM ServerDHParams
-getServerDHParams = fromJust "server DH params" <$> gets hstServerDHParams
+getServerDHParams = handleJust "server DH params" =<< gets hstServerDHParams
 
 getServerECDHParams :: HandshakeM ServerECDHParams
-getServerECDHParams = fromJust "server ECDH params" <$> gets hstServerECDHParams
+getServerECDHParams = handleJust "server ECDH params" =<< gets hstServerECDHParams
 
 setServerDHParams :: ServerDHParams -> HandshakeM ()
 setServerDHParams shp = modify (\hst -> hst { hstServerDHParams = Just shp })
@@ -161,10 +161,10 @@ setServerECDHParams :: ServerECDHParams -> HandshakeM ()
 setServerECDHParams shp = modify (\hst -> hst { hstServerECDHParams = Just shp })
 
 getDHPrivate :: HandshakeM DHPrivate
-getDHPrivate = fromJust "server DH private" <$> gets hstDHPrivate
+getDHPrivate = handleJust "server DH private" =<< gets hstDHPrivate
 
 getECDHPrivate :: HandshakeM GroupPrivate
-getECDHPrivate = fromJust "server ECDH private" <$> gets hstECDHPrivate
+getECDHPrivate = handleJust "server ECDH private" =<< gets hstECDHPrivate
 
 setDHPrivate :: DHPrivate -> HandshakeM ()
 setDHPrivate shp = modify (\hst -> hst { hstDHPrivate = Just shp })
@@ -197,7 +197,7 @@ getClientCertRequest :: HandshakeM (Maybe ClientCertRequestData)
 getClientCertRequest = gets hstClientCertRequest
 
 getPendingCipher :: HandshakeM Cipher
-getPendingCipher = fromJust "pending cipher" <$> gets hstPendingCipher
+getPendingCipher = handleJust "pending cipher" =<< gets hstPendingCipher
 
 addHandshakeMessage :: ByteString -> HandshakeM ()
 addHandshakeMessage content = modify $ \hs -> hs { hstHandshakeMessages = content : hstHandshakeMessages hs}
@@ -212,14 +212,17 @@ updateHandshakeDigest content = modify $ \hs -> hs
                                 Right hashCtx -> Right $ hashUpdate hashCtx content }
 
 getHandshakeDigest :: Version -> Role -> HandshakeM ByteString
-getHandshakeDigest ver role = gets gen
-  where gen hst = case hstHandshakeDigest hst of
-                      Right hashCtx ->
-                         let msecret = fromJust "master secret" $ hstMasterSecret hst
-                             cipher  = fromJust "cipher" $ hstPendingCipher hst
-                          in generateFinish ver cipher msecret hashCtx
+getHandshakeDigest ver role =
+    either throwError return =<< gets gen
+  where 
+        gen :: HandshakeState -> Either TLSError ByteString
+        gen hst = case hstHandshakeDigest hst of
+                      Right hashCtx -> do
+                         msecret <- maybeToRight (Error_Misc "master secret") $ hstMasterSecret hst
+                         cipher  <- maybeToRight (Error_Misc "cipher") $ hstPendingCipher hst
+                         pure $ generateFinish ver cipher msecret hashCtx
                       Left _        ->
-                         error "un-initialized handshake digest"
+                         Left $ Error_Misc "un-initialized handshake digest"
         generateFinish | role == ClientRole = generateClientFinished
                        | otherwise          = generateServerFinished
 
@@ -230,13 +233,15 @@ setMasterSecretFromPre :: ByteArrayAccess preMaster
                        -> preMaster -- ^ the pre master secret
                        -> HandshakeM ()
 setMasterSecretFromPre ver role premasterSecret = do
-    secret <- genSecret <$> get
+    secret <- genSecret =<< get
     setMasterSecret ver role secret
-  where genSecret hst =
-            generateMasterSecret ver (fromJust "cipher" $ hstPendingCipher hst)
+  where genSecret hst = do
+            cipher <- handleJust "cipher" $ hstPendingCipher hst
+            srand <- handleJust "server random" $ hstServerRandom hst
+            pure $ generateMasterSecret ver cipher
                                  premasterSecret
                                  (hstClientRandom hst)
-                                 (fromJust "server random" $ hstServerRandom hst)
+                                 srand
 
 -- | Set master secret and as a side effect generate the key block
 -- with all the right parameters, and setup the pending tx/rx state.
@@ -312,3 +317,8 @@ getHash ver ciph
     | ver < TLS12                              = SHA1_MD5
     | maybe True (< TLS12) (cipherMinVer ciph) = SHA256
     | otherwise                                = cipherHash ciph
+
+handleJust :: String -> Maybe a -> HandshakeM a
+handleJust s =
+    maybe (throwError $ Error_Misc s) pure
+
