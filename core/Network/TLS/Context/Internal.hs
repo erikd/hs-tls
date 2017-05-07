@@ -53,7 +53,6 @@ module Network.TLS.Context.Internal
     , runTxStateT
     , runRxState
     , usingHState
-    , usingHState_
     , usingHStateT
     , getHState
     , getStateRNG
@@ -202,10 +201,6 @@ usingHState ctx f = liftIO $ modifyMVar (ctxHandshake ctx) $ \mst ->
     case mst of
         Nothing -> return (Nothing, Left $ Error_Misc "missing handshake")
         Just st -> return $ swap (Just `fmap` runHandshake st f)
-
-usingHState_ :: Context -> HandshakeM a -> IO a
-usingHState_ ctx f =
-    either throwCore return =<< usingHState ctx f
 
 usingHStateT :: Context -> HandshakeM a -> ErrT TLSError IO a
 usingHStateT ctx = newErrT . usingHState ctx
