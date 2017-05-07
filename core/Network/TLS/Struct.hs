@@ -66,7 +66,6 @@ import qualified Data.ByteString as B (length)
 import Data.Word
 import Data.X509 (CertificateChain, DistinguishedName)
 import Data.Typeable
-import Control.Exception (Exception(..))
 import Network.TLS.Types
 import Network.TLS.Crypto
 import Network.TLS.Util.Serialization
@@ -156,8 +155,6 @@ instance Error TLSError where
     strMsg = Error_Misc
 #endif
 
-instance Exception TLSError
-
 -- | TLS Exceptions related to bad user usage or
 -- asynchronous errors
 data TLSException =
@@ -167,8 +164,6 @@ data TLSException =
     | ConnectionNotEstablished        -- ^ Usage error when the connection has not been established
                                       --   and the user is trying to send or receive data
     deriving (Show,Eq,Typeable)
-
-instance Exception TLSException
 
 data Packet =
       Handshake [Handshake]
