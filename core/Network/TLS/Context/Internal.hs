@@ -76,7 +76,7 @@ import qualified Data.ByteString as B
 
 import Control.Concurrent.MVar
 import Control.Monad.State.Strict
-import Control.Exception (Exception(), mask, onException, throwIO, )
+import Control.Exception (Exception(), mask, onException)
 import Data.IORef
 import Data.Tuple
 

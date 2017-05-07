@@ -26,15 +26,10 @@ import Data.ByteString.Char8 (ByteString)
 
 import Data.IORef
 import Control.Monad.State.Strict
-import Control.Exception (throwIO)
-import System.IO.Error (mkIOError, eofErrorType)
 
-checkValid :: Context -> IO ()
-checkValid ctx = do
-    established <- ctxEstablished ctx
-    unless established $ throwIO ConnectionNotEstablished
-    eofed <- ctxEOF ctx
-    when eofed $ throwIO $ mkIOError eofErrorType "data" Nothing Nothing
+
+checkValid :: Context -> IO (Either TLSError ())
+checkValid = runErrT . checkValidT
 
 checkValidT :: Context -> ErrT TLSError IO ()
 checkValidT ctx = do

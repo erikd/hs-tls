@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Network.TLS.Handshake.Common
-    ( handshakeFailed
-    , errorToAlert
+    ( errorToAlert
     , unexpected
     , newSession
     , handshakeTerminate
@@ -37,10 +36,7 @@ import Data.List (find)
 import Data.ByteString.Char8 (ByteString)
 
 import Control.Monad.State.Strict
-import Control.Exception (throwIO)
 
-handshakeFailed :: TLSError -> IO ()
-handshakeFailed err = throwIO $ HandshakeFailed err
 
 errorToAlert :: TLSError -> Packet
 errorToAlert (Error_Protocol (_, _, ad)) = Alert [(AlertLevel_Fatal, ad)]
