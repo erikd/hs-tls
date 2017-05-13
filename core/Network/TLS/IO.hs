@@ -10,6 +10,7 @@ module Network.TLS.IO
     ( checkValid
     , checkValidT
     , sendPacket
+    , sendPacketT
     , recvPacket
     ) where
 

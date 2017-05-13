@@ -21,11 +21,10 @@ import Network.TLS.Packet
 import Network.TLS.ErrT
 import Network.TLS.Extension
 import Network.TLS.IO
-import Network.TLS.Imports
 import Network.TLS.State hiding (getNegotiatedProtocol)
 import Network.TLS.Measurement
 import Network.TLS.Wire (encodeWord16)
-import Network.TLS.Util (bytesEq, catchException)
+import Network.TLS.Util (bytesEq)
 import Network.TLS.Types
 import Network.TLS.X509
 import Data.Maybe

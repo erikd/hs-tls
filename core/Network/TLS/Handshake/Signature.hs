@@ -26,7 +26,6 @@ import Network.TLS.Packet (generateCertificateVerify_SSL, generateCertificateVer
 import Network.TLS.State
 import Network.TLS.Handshake.State
 import Network.TLS.Handshake.Key
-import Network.TLS.Util
 import Network.TLS.ErrT
 
 import Control.Monad.State.Strict

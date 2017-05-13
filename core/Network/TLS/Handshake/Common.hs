@@ -30,7 +30,6 @@ import Network.TLS.Record.State
 import Network.TLS.Measurement
 import Network.TLS.Types
 import Network.TLS.Cipher
-import Network.TLS.Util
 import Network.TLS.ErrT
 import Data.List (find)
 import Data.ByteString.Char8 (ByteString)
@@ -80,10 +79,10 @@ sendChangeCipherAndFinish :: Context
                           -> Role
                           -> ErrT TLSError IO ()
 sendChangeCipherAndFinish ctx role = do
-    sendPacket ctx ChangeCipherSpec
+    sendPacketT ctx ChangeCipherSpec
     liftIO $ contextFlush ctx
     cf <- usingStateT ctx getVersion >>= \ver -> usingHStateT ctx $ getHandshakeDigest ver role
-    sendPacket ctx (Handshake [Finished cf])
+    sendPacketT ctx (Handshake [Finished cf])
     liftIO $ contextFlush ctx
 
 recvChangeCipherAndFinish :: Context -> ErrT TLSError IO ()

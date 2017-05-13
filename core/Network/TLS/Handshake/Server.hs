@@ -13,7 +13,6 @@ module Network.TLS.Handshake.Server
     ) where
 
 import Network.TLS.Parameters
-import Network.TLS.Imports
 import Network.TLS.Context.Internal
 import Network.TLS.Session
 import Network.TLS.Struct
@@ -243,7 +242,7 @@ doHandshake sparams mcred ctx chosenVersion usedCipher usedCompression clientSes
         Just sessionData -> do
             usingStateT ctx (setSession clientSession True)
             serverhello <- makeServerHello clientSession
-            sendPacket ctx $ Handshake [serverhello]
+            sendPacketT ctx $ Handshake [serverhello]
             usingHStateT ctx $ setMasterSecret chosenVersion ServerRole $ sessionSecret sessionData
             sendChangeCipherAndFinish ctx ServerRole
             recvChangeCipherAndFinish ctx
@@ -316,7 +315,7 @@ doHandshake sparams mcred ctx chosenVersion usedCipher usedCompression clientSes
             let certMsg = case mcred of
                             Just (srvCerts, _) -> Certificates srvCerts
                             _                  -> Certificates $ CertificateChain []
-            sendPacket ctx $ Handshake [ serverhello, certMsg ]
+            sendPacketT ctx $ Handshake [ serverhello, certMsg ]
 
             -- send server key exchange if needed
             skx <- case cipherKeyExchange usedCipher of

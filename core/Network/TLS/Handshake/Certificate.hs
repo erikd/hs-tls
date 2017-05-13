@@ -11,7 +11,6 @@ module Network.TLS.Handshake.Certificate
     ) where
 
 import Network.TLS.ErrT
-import Network.TLS.Context.Internal
 import Network.TLS.Struct
 import Network.TLS.X509
 import Control.Monad.State.Strict

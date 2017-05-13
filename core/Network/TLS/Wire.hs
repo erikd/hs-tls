@@ -16,14 +16,14 @@ module Network.TLS.Wire
     , runGetErr
     , runGetMaybe
     , tryGet
-    , remaining
-    , getWord8
+    , G.remaining
+    , G.getWord8
     , getWords8
     , getWord16
     , getWords16
     , getWord24
     , getWord32
-    , getBytes
+    , G.getBytes
     , getOpaque8
     , getOpaque16
     , getOpaque24
@@ -31,7 +31,7 @@ module Network.TLS.Wire
     , getBigNum16
     , getList
     , processBytes
-    , isEmpty
+    , G.isEmpty
     , Put
     , runPut
     , putWord8
@@ -51,7 +51,7 @@ module Network.TLS.Wire
     , encodeWord64
     ) where
 
-import Data.Serialize.Get hiding (runGet)
+import Data.Serialize.Get (Get)
 import qualified Data.Serialize.Get as G
 import Data.Serialize.Put
 import Control.Applicative ((<$>))
@@ -71,7 +71,7 @@ data GetResult a =
     | GotSuccessRemaining a ByteString
 
 runGet :: String -> Get a -> ByteString -> GetResult a
-runGet lbl f = toGetResult <$> G.runGetPartial (label lbl f)
+runGet lbl f = toGetResult <$> G.runGetPartial (G.label lbl f)
   where toGetResult (G.Fail err _)    = GotError (Error_Packet_Parsing err)
         toGetResult (G.Partial cont)  = GotPartial (toGetResult <$> cont)
         toGetResult (G.Done r bsLeft)
@@ -92,32 +92,32 @@ tryGet :: Get a -> ByteString -> Maybe a
 tryGet f = either (const Nothing) Just . G.runGet f
 
 getWords8 :: Get [Word8]
-getWords8 = getWord8 >>= \lenb -> replicateM (fromIntegral lenb) getWord8
+getWords8 = G.getWord8 >>= \lenb -> replicateM (fromIntegral lenb) G.getWord8
 
 getWord16 :: Get Word16
-getWord16 = getWord16be
+getWord16 = G.getWord16be
 
 getWords16 :: Get [Word16]
 getWords16 = getWord16 >>= \lenb -> replicateM (fromIntegral lenb `div` 2) getWord16
 
 getWord24 :: Get Int
 getWord24 = do
-    a <- fromIntegral <$> getWord8
-    b <- fromIntegral <$> getWord8
-    c <- fromIntegral <$> getWord8
+    a <- fromIntegral <$> G.getWord8
+    b <- fromIntegral <$> G.getWord8
+    c <- fromIntegral <$> G.getWord8
     return $ (a `shiftL` 16) .|. (b `shiftL` 8) .|. c
 
 getWord32 :: Get Word32
-getWord32 = getWord32be
+getWord32 = G.getWord32be
 
 getOpaque8 :: Get ByteString
-getOpaque8 = getWord8 >>= getBytes . fromIntegral
+getOpaque8 = G.getWord8 >>= G.getBytes . fromIntegral
 
 getOpaque16 :: Get ByteString
-getOpaque16 = getWord16 >>= getBytes . fromIntegral
+getOpaque16 = getWord16 >>= G.getBytes . fromIntegral
 
 getOpaque24 :: Get ByteString
-getOpaque24 = getWord24 >>= getBytes
+getOpaque24 = getWord24 >>= G.getBytes
 
 getInteger16 :: Get Integer
 getInteger16 = os2ip <$> getOpaque16
@@ -126,14 +126,14 @@ getBigNum16 :: Get BigNum
 getBigNum16 = BigNum <$> getOpaque16
 
 getList :: Int -> (Get (Int, a)) -> Get [a]
-getList totalLen getElement = isolate totalLen (getElements totalLen)
+getList totalLen getElement = G.isolate totalLen (getElements totalLen)
   where getElements len
             | len < 0     = error "list consumed too much data. should never happen with isolate."
             | len == 0    = return []
             | otherwise   = getElement >>= \(elementLen, a) -> liftM ((:) a) (getElements (len - elementLen))
 
 processBytes :: Int -> Get a -> Get a
-processBytes i f = isolate i f
+processBytes i f = G.isolate i f
 
 putWords8 :: [Word8] -> Put
 putWords8 l = do

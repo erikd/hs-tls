@@ -37,8 +37,6 @@ module Network.TLS.Extension
     , SignatureAlgorithms(..)
     ) where
 
-import Control.Monad
-
 import Data.Word
 import Data.Maybe (fromMaybe, catMaybes)
 import Data.ByteString (ByteString)
@@ -48,7 +46,6 @@ import qualified Data.ByteString.Char8 as BC
 import Network.TLS.Struct (ExtensionID, EnumSafe8(..), EnumSafe16(..), HashAndSignatureAlgorithm)
 import Network.TLS.Crypto.Types
 import Network.TLS.Wire
-import Network.TLS.Imports
 import Network.TLS.Packet (putSignatureHashAlgorithm, getSignatureHashAlgorithm)
 
 type HostName = String

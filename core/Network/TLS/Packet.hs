@@ -59,13 +59,12 @@ module Network.TLS.Packet
     , putSignatureHashAlgorithm
     ) where
 
-import Network.TLS.Imports
 import Network.TLS.Struct
 import Network.TLS.Wire
 import Network.TLS.Cap
 import Data.Maybe (fromJust)
-import Data.Word
-import Control.Monad
+import Data.Word (Word16)
+import Control.Monad (replicateM, when)
 import Data.ASN1.Types (fromASN1, toASN1)
 import Data.ASN1.Encoding (decodeASN1', encodeASN1')
 import Data.ASN1.BinaryEncoding (DER(..))
@@ -78,6 +77,10 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as BC
 import           Data.ByteArray (ByteArrayAccess)
 import qualified Data.ByteArray as B (convert)
+
+-- The `fromJust` function is partial and should normally be avoided for production
+-- code, but here is is used within the Get parser from Data.Serialize (cereal) which
+-- will catch the pattern match exception and turn it into a failed parse.
 
 data CurrentParams = CurrentParams
     { cParamsVersion     :: Version                     -- ^ current protocol version
@@ -118,7 +121,7 @@ getHandshakeType = do
  - decode and encode headers
  -}
 decodeHeader :: ByteString -> Either TLSError Header
-decodeHeader = runGetErr "header" $ liftM3 Header getHeaderType getVersion getWord16
+decodeHeader = runGetErr "header" $ Header <$> getHeaderType <*> getVersion <*> getWord16
 
 decodeDeprecatedHeaderLength :: ByteString -> Either TLSError Word16
 decodeDeprecatedHeaderLength = runGetErr "deprecatedheaderlength" $ subtract 0x8000 <$> getWord16
@@ -156,7 +159,7 @@ decodeAlerts = runGetErr "alerts" $ loop
             r <- remaining
             if r == 0
                 then return []
-                else liftM2 (:) decodeAlert loop
+                else (:) <$> decodeAlert <*> loop
 
 encodeAlerts :: [(AlertLevel, AlertDescription)] -> ByteString
 encodeAlerts l = runPut $ mapM_ encodeAlert l
@@ -516,7 +519,7 @@ encodeChangeCipherSpec = runPut (putWord8 1)
 -- rsa pre master secret
 decodePreMasterSecret :: ByteString -> Either TLSError (Version, ByteString)
 decodePreMasterSecret = runGetErr "pre-master-secret" $ do
-    liftM2 (,) getVersion (getBytes 46)
+    (,) <$> getVersion <*> getBytes 46
 
 encodePreMasterSecret :: Version -> ByteString -> ByteString
 encodePreMasterSecret version bytes = runPut (putVersion version >> putBytes bytes)

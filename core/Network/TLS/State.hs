@@ -52,7 +52,6 @@ module Network.TLS.State
     , withRNG
     ) where
 
-import Network.TLS.Imports
 import Network.TLS.Struct
 import Network.TLS.RNG
 import Network.TLS.Types (Role(..))
