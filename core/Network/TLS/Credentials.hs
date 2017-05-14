@@ -18,7 +18,6 @@ module Network.TLS.Credentials
     ) where
 
 import Data.ByteString (ByteString)
-import Data.Monoid
 import Data.Maybe (catMaybes)
 import Data.List (find)
 import Network.TLS.Crypto.Types

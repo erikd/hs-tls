@@ -58,7 +58,6 @@ import Network.TLS.Cipher
 import Network.TLS.Compression
 import Network.TLS.Types
 import Network.TLS.ErrT
-import Control.Applicative (Applicative)
 import Control.Monad.State.Strict
 import Data.X509 (CertificateChain)
 import Data.ByteArray (ByteArrayAccess)
@@ -214,7 +213,7 @@ updateHandshakeDigest content = modify $ \hs -> hs
 getHandshakeDigest :: Version -> Role -> HandshakeM ByteString
 getHandshakeDigest ver role =
     either throwError return =<< gets gen
-  where 
+  where
         gen :: HandshakeState -> Either TLSError ByteString
         gen hst = case hstHandshakeDigest hst of
                       Right hashCtx -> do

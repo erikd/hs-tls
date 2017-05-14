@@ -85,7 +85,6 @@ import Data.Maybe (isJust)
 import Control.Concurrent.MVar
 import Control.Monad.State.Strict
 import Data.IORef
-import Data.Monoid (mappend)
 
 -- deprecated imports
 #ifdef INCLUDE_NETWORK

@@ -25,7 +25,6 @@ module Network.TLS.Record.State
     ) where
 
 import Data.Word
-import Control.Applicative
 import Control.Monad.State.Strict
 import Network.TLS.Compression
 import Network.TLS.Cipher

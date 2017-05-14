@@ -13,7 +13,6 @@ module Network.TLS.Record.Engage
         ( engageRecord
         ) where
 
-import Control.Applicative
 import Control.Monad.State.Strict
 import Crypto.Cipher.Types (AuthTag(..))
 

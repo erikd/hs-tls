@@ -61,8 +61,7 @@ module Network.TLS.Struct
     , typeOfHandshake
     ) where
 
-import Data.ByteString (ByteString)
-import qualified Data.ByteString as B (length)
+import qualified Data.ByteString as B
 import Data.Word
 import Data.X509 (CertificateChain, DistinguishedName)
 import Data.Typeable

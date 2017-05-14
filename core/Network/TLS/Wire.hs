@@ -54,7 +54,6 @@ module Network.TLS.Wire
 import Data.Serialize.Get (Get)
 import qualified Data.Serialize.Get as G
 import Data.Serialize.Put
-import Control.Applicative ((<$>))
 import Control.Monad
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B

@@ -21,7 +21,6 @@ import Network.TLS.Compression
 import Network.TLS.Credentials
 import Network.TLS.Crypto
 import Network.TLS.Extension
-import Network.TLS.Util (catchException)
 import Network.TLS.IO
 import Network.TLS.Types
 import Network.TLS.State hiding (getNegotiatedProtocol)
@@ -32,7 +31,7 @@ import Network.TLS.Measurement
 import Network.TLS.ErrT
 import Network.TLS.Util
 import Data.Maybe (isJust, listToMaybe, mapMaybe)
-import Data.List (intersect, any)
+import Data.List (intersect)
 import qualified Data.ByteString as B
 import Data.ByteString.Char8 ()
 import Data.Ord (Down(..))
