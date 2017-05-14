@@ -76,7 +76,6 @@ import qualified Data.ByteString as B
 
 import Control.Concurrent.MVar
 import Control.Monad.State.Strict
-import Control.Exception (Exception(), mask, onException)
 import Data.IORef
 import Data.Tuple
 
@@ -262,11 +261,3 @@ withStateLock ctx f = withMVar (ctxLockState ctx) (const f)
 withMVarT :: MVar a -> (a -> ErrT e IO b) -> ErrT e IO b
 withMVarT m f = newErrT $ withMVar m (runErrT . f)
 
--- | modifyMVarT : modifyMVar lifted into `ErrT e IO`.
-modifyMVarT :: MVar a -> (a -> ErrT e IO (a, b)) -> ErrT e IO b
-modifyMVarT m f =
-    newErrT . modifyMVar m $ \ st -> do
-        res <- runErrT $ f st
-        case res of
-            Left e -> pure (st, Left e)
-            Right (newSt, b) -> pure (newSt, Right b)
